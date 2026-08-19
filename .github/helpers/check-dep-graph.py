@@ -5,27 +5,19 @@ import subprocess
 import sys
 
 CRATES_IN_GRAPH = set([
-    # ./components
-    'eip681',
+    # Workspace crates
+    'bft_primitives',
+    'zcash_primitives',
+    'zcash_protocol',
+    # Published Zcash crates
     'equihash',
-    'f4jumble',
     'zcash_address',
     'zcash_encoding',
-    'zcash_protocol',
-    'zip321',
-    # ./
-    'pczt',
-    'zcash_client_backend',
-    'zcash_client_sqlite',
-    'zcash_history',
-    'zcash_keys',
-    'zcash_pool_migration',
-    'zcash_primitives',
-    'zcash_proofs',
     'zcash_transparent',
-    # Other repos
+    # Shielded protocol crates
     'orchard',
     'sapling-crypto',
+    # Protocol component crates
     'zcash_note_encryption',
     'zcash_spec',
     'zip32',
