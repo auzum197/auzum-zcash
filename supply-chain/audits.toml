@@ -1910,7 +1910,7 @@ delta = "1.6.0 -> 1.7.0"
 
 [[trusted.eip681]]
 criteria = "safe-to-deploy"
-user-id = 67525 # Schell Carl Scivally (schell)
+user-id = 67525
 start = "2026-03-30"
 end = "2027-04-17"
 
