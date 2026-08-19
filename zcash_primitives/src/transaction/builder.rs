@@ -1025,8 +1025,6 @@ impl<P: consensus::Parameters> Builder<P, ()> {
             {
                 if build_config.is_vcrosslink() {
                     TxVersion::VCrosslink
-                } else if consensus_branch_id == BranchId::Crosslink {
-                    TxVersion::V5
                 } else {
                     TxVersion::suggested_for_branch(consensus_branch_id)
                 }
@@ -2093,8 +2091,6 @@ mod tests {
             nu6_3: Some(BlockHeight::from_u32(10)),
             #[cfg(zcash_unstable = "nu7")]
             nu7: None,
-            #[cfg(zcash_unstable = "crosslink")]
-            crosslink: None,
         }
     }
 
@@ -2112,19 +2108,12 @@ mod tests {
             nu6_2: Some(BlockHeight::from_u32(9)),
             nu6_3: Some(BlockHeight::from_u32(10)),
             nu7: Some(BlockHeight::from_u32(11)),
-            #[cfg(zcash_unstable = "crosslink")]
-            crosslink: None,
         }
     }
 
     #[cfg(all(feature = "circuits", zcash_unstable = "crosslink"))]
     fn crosslink_test_network() -> zcash_protocol::local_consensus::LocalNetwork {
-        /// Crosslink activation height for the builder fixture.
-        const CROSSLINK_ACTIVATION_HEIGHT: BlockHeight = BlockHeight::from_u32(11);
-
-        let mut network = nu6_3_test_network();
-        network.crosslink = Some(CROSSLINK_ACTIVATION_HEIGHT);
-        network
+        nu6_3_test_network()
     }
 
     #[test]
@@ -2148,7 +2137,7 @@ mod tests {
         const BOND_AMOUNT: Zatoshis = Zatoshis::const_from_u64(50_000);
 
         let params = crosslink_test_network();
-        let target_height = params.activation_height(NetworkUpgrade::Crosslink).unwrap();
+        let target_height = params.activation_height(NetworkUpgrade::Nu6).unwrap();
         let action = StakingAction::CreateNewDelegationBond(CreateNewDelegationBond::new(
             BondId::from_bytes(BOND_ID_BYTES),
             StakingAuthChallenge::from_bytes(CHALLENGE_BYTES),

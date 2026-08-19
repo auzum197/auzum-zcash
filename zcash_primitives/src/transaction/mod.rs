@@ -235,8 +235,6 @@ impl TxVersion {
             BranchId::Nu6_3 => TxVersion::V6,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => TxVersion::V6,
-            #[cfg(zcash_unstable = "crosslink")]
-            BranchId::Crosslink => TxVersion::VCrosslink,
         }
     }
 
@@ -254,8 +252,6 @@ impl TxVersion {
                 Nu6_3 => true,
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => false, // ZIP 2003
-                #[cfg(zcash_unstable = "crosslink")]
-                Crosslink => true,
             },
             TxVersion::V5 => match consensus_branch_id {
                 Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy => false,
@@ -263,8 +259,6 @@ impl TxVersion {
                 Nu6_3 => true,
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => true,
-                #[cfg(zcash_unstable = "crosslink")]
-                Crosslink => true,
             },
             TxVersion::V6 => match consensus_branch_id {
                 Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy | Nu5 | Nu6
@@ -272,31 +266,19 @@ impl TxVersion {
                 Nu6_3 => true, // Ironwood / NU6.3
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => true, // ZIP 230 or ZIP 248, whichever is chosen for activation
-                #[cfg(zcash_unstable = "crosslink")]
-                Crosslink => false,
             },
             #[cfg(zcash_unstable = "crosslink")]
             TxVersion::VCrosslink => match consensus_branch_id {
-                Crosslink => true,
-                Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy | Nu5 | Nu6
-                | Nu6_1 | Nu6_2 | Nu6_3 => false,
+                Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy => false,
+                Nu5 | Nu6 | Nu6_1 | Nu6_2 => true,
+                Nu6_3 => true,
                 #[cfg(zcash_unstable = "nu7")]
-                Nu7 => false,
+                Nu7 => true,
             },
         }
     }
 }
 
-#[cfg(zcash_unstable = "crosslink")]
-fn wire_consensus_branch_id(version: TxVersion, consensus_branch_id: BranchId) -> u32 {
-    if version == TxVersion::VCrosslink {
-        return BranchId::Nu6_1.into();
-    }
-
-    consensus_branch_id.into()
-}
-
-#[cfg(not(zcash_unstable = "crosslink"))]
 fn wire_consensus_branch_id(_version: TxVersion, consensus_branch_id: BranchId) -> u32 {
     consensus_branch_id.into()
 }
@@ -1013,14 +995,8 @@ impl Transaction {
 
     #[cfg(zcash_unstable = "crosslink")]
     fn read_vcrosslink<R: Read>(mut reader: R, version: TxVersion) -> io::Result<Self> {
-        let (wire_branch_id, lock_time, expiry_height) = Self::read_header_fragment(&mut reader)?;
-        if wire_branch_id != BranchId::Nu6_1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid VCrosslink consensus branch id",
-            ));
-        }
-        let consensus_branch_id = BranchId::Crosslink;
+        let (consensus_branch_id, lock_time, expiry_height) =
+            Self::read_header_fragment(&mut reader)?;
 
         #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
         let zip233_amount = Zatoshis::ZERO;
@@ -1417,8 +1393,6 @@ pub mod testing {
             BranchId::Nu6_3 => Just(TxVersion::V6).boxed(),
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => Just(TxVersion::V6).boxed(),
-            #[cfg(zcash_unstable = "crosslink")]
-            BranchId::Crosslink => Just(TxVersion::VCrosslink).boxed(),
         }
     }
 
