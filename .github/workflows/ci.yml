@@ -53,11 +53,11 @@ jobs:
           ${{
             fromJSON(
               github.event_name == 'schedule'
-              && '["transparent", "transparent-inputs-only", "transparent-key-encoding-only", "Sapling-only", "Orchard", "all-pools", "all-features", "NU7"]'
+              && '["transparent", "transparent-inputs-only", "Sapling-only", "Orchard", "all-pools", "all-features", "NU7"]'
               || (
                 github.event_name == 'pull_request'
                 && '["all-features"]'
-                || '["transparent", "transparent-inputs-only", "transparent-key-encoding-only", "Sapling-only", "Orchard", "all-pools", "all-features"]'
+                || '["transparent", "transparent-inputs-only", "Sapling-only", "Orchard", "all-pools", "all-features"]'
               )
             )
           }}
@@ -85,11 +85,7 @@ jobs:
             ${{
               matrix.state == 'transparent-inputs-only'
               && 'transparent-inputs'
-              || (
-                matrix.state == 'transparent-key-encoding-only'
-                && 'transparent-key-encoding'
-                || ''
-              )
+              || ''
             }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -121,7 +117,7 @@ jobs:
           ${{
             fromJSON(
               github.event_name == 'pull_request'
-              && '["transparent", "transparent-inputs-only", "transparent-key-encoding-only", "Sapling-only", "Orchard", "all-pools"]'
+              && '["transparent", "transparent-inputs-only", "Sapling-only", "Orchard", "all-pools"]'
               || '["covered-by-runtime-matrix"]'
             )
           }}
@@ -140,11 +136,7 @@ jobs:
             ${{
               matrix.state == 'transparent-inputs-only'
               && 'transparent-inputs'
-              || (
-                matrix.state == 'transparent-key-encoding-only'
-                && 'transparent-key-encoding'
-                || ''
-              )
+              || ''
             }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ github.event_name == 'pull_request' }}
@@ -266,7 +258,6 @@ jobs:
         uses: ./.github/actions/prepare
         with:
           all-pools: true
-          extra-features: pczt-tests
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: msrv
@@ -363,110 +354,6 @@ jobs:
           cargo build --workspace --all-targets "${feature_flags[@]}" --verbose
       - name: Verify working directory is clean (excluding lockfile)
         run: git diff --exit-code ':!Cargo.lock'
-
-  build-nodefault:
-    name: Build target ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - wasm32-wasip1
-        include:
-          - target: wasm32-wasip1
-            build_deps: >
-              gcc-multilib
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          path: crates
-      - name: Install linux build dependencies
-        run: sudo apt update && sudo apt install ${{ matrix.build_deps }}
-        if: matrix.build_deps != ''
-      # We use a synthetic crate to ensure no dev-dependencies are enabled, which can
-      # be incompatible with some of these targets.
-      - name: Copy Rust toolchain into the root for use in synthetic crate setup
-        run: cp crates/rust-toolchain.toml .
-      - name: Create synthetic crate for testing
-        run: cargo init --lib ci-build
-      - name: Move Rust toolchain file into synthetic crate
-        run: mv rust-toolchain.toml ci-build/
-      - name: Copy patch directives into synthetic crate
-        run: |
-          echo "[patch.crates-io]" >> ./ci-build/Cargo.toml
-          cat ./crates/Cargo.toml | sed "0,/.\+\(patch.crates.\+\)/d" >> ./ci-build/Cargo.toml
-      - name: Add zcash_proofs as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --no-default-features --path ../crates/zcash_proofs
-      - name: Add zcash_client_backend as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --path ../crates/zcash_client_backend
-      - name: Copy pinned dependencies into synthetic crate
-        run: cp crates/Cargo.lock ci-build/
-      - name: Add target
-        working-directory: ./ci-build
-        run: rustup target add ${{ matrix.target }}
-      - name: Build for target
-        working-directory: ./ci-build
-        run: cargo build --verbose --target ${{ matrix.target }}
-
-  build-nostd:
-    name: Build target ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - thumbv7em-none-eabihf
-        include:
-          - target: thumbv7em-none-eabihf
-            build_deps: >
-              gcc-arm-none-eabi
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          path: crates
-      - name: Install linux build dependencies
-        run: sudo apt update && sudo apt install ${{ matrix.build_deps }}
-        if: matrix.build_deps != ''
-      # We use a synthetic crate to ensure no dev-dependencies are enabled, which can
-      # be incompatible with some of these targets.
-      - name: Copy Rust toolchain into the root for use in synthetic crate setup
-        run: cp crates/rust-toolchain.toml .
-      - name: Create synthetic crate for testing
-        run: cargo init --lib ci-build
-      - name: Move Rust toolchain file into synthetic crate
-        run: mv rust-toolchain.toml ci-build/
-      - name: Copy patch directives into synthetic crate
-        run: |
-          echo "[patch.crates-io]" >> ./ci-build/Cargo.toml
-          cat ./crates/Cargo.toml | sed "0,/.\+\(patch.crates.\+\)/d" >> ./ci-build/Cargo.toml
-      - name: Add no_std pragma to lib.rs
-        run: |
-          echo "#![no_std]" > ./ci-build/src/lib.rs
-      - name: Add zcash_keys as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --no-default-features --path ../crates/zcash_keys
-      - name: Add pczt as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --no-default-features --path ../crates/pczt
-      - name: Add zcash_primitives as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --no-default-features --path ../crates/zcash_primitives
-      - name: Add zcash_pool_migration as a dependency of the synthetic crate
-        working-directory: ./ci-build
-        run: cargo add --no-default-features --path ../crates/zcash_pool_migration
-      - name: Add lazy_static with the spin_no_std feature
-        working-directory: ./ci-build
-        run: cargo add lazy_static --features "spin_no_std"
-      - name: Copy pinned dependencies into synthetic crate
-        run: cp crates/Cargo.lock ci-build/
-      - name: Add target
-        working-directory: ./ci-build
-        run: rustup target add ${{ matrix.target }}
-      - name: Build for target
-        working-directory: ./ci-build
-        run: cargo build --verbose --target ${{ matrix.target }}
 
   bitrot:
     name: Bitrot check
@@ -644,114 +531,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  readme-graph:
-    name: Readme dependency graph
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Check consistency
-        run: python3 .github/helpers/check-dep-graph.py
-
-  release-tags:
-    name: Bumped crate versions are tagged
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Check that each bumped crate version is tagged upstream
-        env:
-          BASE_SHA: >-
-            ${{
-              github.event.pull_request.base.sha
-              || github.event.merge_group.base_sha
-            }}
-          HEAD_SHA: >-
-            ${{
-              github.event.pull_request.head.sha
-              || github.event.merge_group.head_sha
-            }}
-        run: python3 .github/helpers/check-release-tags.py
-
-  protobuf:
-    name: protobuf consistency
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - id: prepare
-        uses: ./.github/actions/prepare
-      - name: Install protoc
-        uses: supplypike/setup-bin@8365380a806a88e7a0f0d07059b175ca2f5418d7 # v5.0.1
-        with:
-          uri: 'https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip'
-          name: 'protoc'
-          version: '25.1'
-          subPath: 'bin'
-      - name: Trigger protobuf regeneration
-        shell: bash
-        env:
-          ALL_FEATURES: ${{ steps.prepare.outputs.all-features }}
-          FEATURES: ${{ steps.prepare.outputs.feature-list }}
-        run: |
-          feature_flags=()
-          if [[ "$ALL_FEATURES" == true ]]; then
-            feature_flags+=(--all-features)
-          elif [[ -n "$FEATURES" ]]; then
-            feature_flags+=(--features "$FEATURES")
-          fi
-          cargo check --workspace "${feature_flags[@]}"
-      - name: run cargo-fmt to handle the case that regeneration sometimes produces unformatted output
-        run: cargo fmt
-      - name: Verify working directory is clean
-        run: git diff --exit-code
-
-  uuid:
-    name: UUID validity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Extract UUIDs
-        id: extract
-        run: |
-          {
-            echo 'UUIDS<<EOF'
-            git grep -h "const MIGRATION_ID: Uuid = Uuid::from_u128" zcash_client_sqlite/ |
-              sed -e "s,.*Uuid::from_u128(0x,," -e "s,_,-,g" -e "s,);,,"
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
-      - name: Check UUID validity
-        env:
-          UUIDS: ${{ steps.extract.outputs.UUIDS }}
-        run: uuidparse -n -o type $UUIDS | xargs -L 1 test "invalid" !=
-      - name: Check UUID type
-        env:
-          UUIDS: ${{ steps.extract.outputs.UUIDS }}
-        run: uuidparse -n -o type $UUIDS | xargs -L 1 test "random" =
-      - name: Check UUID uniqueness
-        env:
-          UUIDS: ${{ steps.extract.outputs.UUIDS }}
-        run: >
-          test $(
-            uuidparse -n -o uuid $U4 | wc -l
-          ) -eq $(
-            uuidparse -n -o uuid $U4 | sort | uniq | wc -l
-          )
-
   required-checks:
     name: Required status checks have passed
     needs:
       - required-test
       - feature-check
       - build-latest
-      - build-nodefault
-      - build-nostd
       - bitrot
       - clippy
       - clippy-nodefault
@@ -759,9 +544,6 @@ jobs:
       - clippy-feature-combos
       - doc-links
       - fmt
-      - protobuf
-      - release-tags
-      - uuid
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:

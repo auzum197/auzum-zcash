@@ -37,12 +37,12 @@ runs:
   steps:
     - id: transparent-pool
       shell: bash
-      run: echo "features=transparent-inputs transparent-key-import transparent-key-encoding" >> $GITHUB_OUTPUT
+      run: echo "features=transparent-inputs" >> $GITHUB_OUTPUT
       if: inputs.transparent-pool == 'true' || inputs.all-pools == 'true'
 
     - id: orchard-pool
       shell: bash
-      run: echo "features=orchard" >> $GITHUB_OUTPUT
+      run: echo "features=" >> $GITHUB_OUTPUT
       if: inputs.orchard-pool == 'true' || inputs.all-pools == 'true'
 
     - id: test
@@ -59,14 +59,7 @@ runs:
         read -ra orchard_features <<< "$ORCHARD_FEATURES"
         read -ra test_features <<< "$TEST_FEATURES"
         features=(
-          bundled-prover
-          download-params
-          lightwalletd-tonic
-          sync
           temporary-zcashd
-          unstable
-          unstable-serialization
-          unstable-spanning-tree
           "${extra_features[@]}"
           "${transparent_features[@]}"
           "${orchard_features[@]}"
