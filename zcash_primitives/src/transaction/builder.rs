@@ -25,6 +25,9 @@ use crate::transaction::{
     },
 };
 
+#[cfg(zcash_unstable = "crosslink")]
+use crate::transaction::components::staking::StakingAction;
+
 #[cfg(feature = "std")]
 use std::sync::mpsc::Sender;
 
@@ -124,6 +127,15 @@ pub enum Error<FE> {
     /// support a feature required by the transaction under construction, or the proposed
     /// transaction version is not supported on the given consensus branch.
     TargetIncompatible(BranchId, TxVersion, Option<PoolType>),
+    #[cfg(zcash_unstable = "crosslink")]
+    /// A staking action requires a VCrosslink builder.
+    StakingActionUnsupported(TxVersion),
+    #[cfg(zcash_unstable = "crosslink")]
+    /// The builder configuration and transaction version disagree on VCrosslink use.
+    CrosslinkConfigMismatch,
+    #[cfg(zcash_unstable = "crosslink")]
+    /// VCrosslink transactions cannot be represented as PCZTs.
+    CrosslinkPcztUnsupported,
 }
 
 impl<FE: fmt::Display> fmt::Display for Error<FE> {
@@ -190,6 +202,21 @@ impl<FE: fmt::Display> fmt::Display for Error<FE> {
                     "{t} is not supported for proposed transaction version {version:?} or consensus branch {branch_id:?}"
                 ),
             },
+            #[cfg(zcash_unstable = "crosslink")]
+            Error::StakingActionUnsupported(version) => {
+                write!(
+                    f,
+                    "Transaction version {version:?} cannot carry a staking action"
+                )
+            }
+            #[cfg(zcash_unstable = "crosslink")]
+            Error::CrosslinkConfigMismatch => {
+                write!(f, "VCrosslink requires a matching builder configuration")
+            }
+            #[cfg(zcash_unstable = "crosslink")]
+            Error::CrosslinkPcztUnsupported => {
+                write!(f, "VCrosslink transactions cannot be represented as PCZTs")
+            }
         }
     }
 }
@@ -317,6 +344,12 @@ pub enum BuildConfig {
         orchard_padding: BundlePadding,
         ironwood_padding: BundlePadding,
     },
+    #[cfg(zcash_unstable = "crosslink")]
+    VCrosslink {
+        sapling_anchor: Option<sapling::Anchor>,
+        orchard_anchor: Option<orchard::Anchor>,
+        orchard_padding: BundlePadding,
+    },
     Coinbase {
         miner_data: Option<PushValue>,
     },
@@ -329,6 +362,10 @@ impl BuildConfig {
     ) -> Option<(sapling::builder::BundleType, sapling::Anchor)> {
         match self {
             BuildConfig::Standard { sapling_anchor, .. } => sapling_anchor
+                .as_ref()
+                .map(|a| (sapling::builder::BundleType::DEFAULT, *a)),
+            #[cfg(zcash_unstable = "crosslink")]
+            BuildConfig::VCrosslink { sapling_anchor, .. } => sapling_anchor
                 .as_ref()
                 .map(|a| (sapling::builder::BundleType::DEFAULT, *a)),
             BuildConfig::Coinbase { .. } => Some((
@@ -345,6 +382,20 @@ impl BuildConfig {
     ) -> Option<orchard::builder::Builder> {
         match self {
             BuildConfig::Standard {
+                orchard_anchor,
+                orchard_padding,
+                ..
+            } => orchard_anchor.as_ref().map(|a| {
+                orchard::builder::Builder::new(
+                    orchard_padding.bundle_type(),
+                    bundle_version,
+                    bundle_version.default_flags(),
+                    *a,
+                )
+                .expect("a transactional bundle type with default flags is always representable")
+            }),
+            #[cfg(zcash_unstable = "crosslink")]
+            BuildConfig::VCrosslink {
                 orchard_anchor,
                 orchard_padding,
                 ..
@@ -403,12 +454,19 @@ impl BuildConfig {
                 )
                 .expect("spends-disabled flags are valid for an Ironwood coinbase bundle"),
             ),
+            #[cfg(zcash_unstable = "crosslink")]
+            BuildConfig::VCrosslink { .. } => None,
         }
     }
 
     /// Returns `true` if this configuration is for building a coinbase transaction.
     pub fn is_coinbase(&self) -> bool {
         matches!(self, BuildConfig::Coinbase { .. })
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    fn is_vcrosslink(&self) -> bool {
+        matches!(self, BuildConfig::VCrosslink { .. })
     }
 }
 
@@ -807,6 +865,8 @@ pub struct Builder<P, U> {
     orchard_builder: Option<orchard::builder::Builder>,
     orchard_bundle_version: Option<orchard::bundle::BundleVersion>,
     ironwood_builder: Option<orchard::builder::Builder>,
+    #[cfg(zcash_unstable = "crosslink")]
+    staking_action: Option<StakingAction>,
     _progress_notifier: U,
 }
 
@@ -869,6 +929,16 @@ impl<P, U> Builder<P, U> {
     /// Checks that the given version supports all features required by the inputs and
     /// outputs already added to the builder.
     fn check_version_compatibility<FE>(&self, version: TxVersion) -> Result<(), Error<FE>> {
+        #[cfg(zcash_unstable = "crosslink")]
+        if version.has_crosslink() != self.build_config.is_vcrosslink() {
+            return Err(Error::CrosslinkConfigMismatch);
+        }
+
+        #[cfg(zcash_unstable = "crosslink")]
+        if self.staking_action.is_some() && !version.has_crosslink() {
+            return Err(Error::StakingActionUnsupported(version));
+        }
+
         if !version.valid_in_branch(self.consensus_branch_id) {
             return Err(Error::TargetIncompatible(
                 self.consensus_branch_id,
@@ -950,7 +1020,20 @@ impl<P: consensus::Parameters> Builder<P, ()> {
         let bundle_version =
             bundle_version_for_branch(consensus_branch_id, orchard::ValuePool::Orchard);
         // Default transaction version for the branch (V6 from NU6.3 onward).
-        let tx_version = TxVersion::suggested_for_branch(consensus_branch_id);
+        let tx_version = {
+            #[cfg(zcash_unstable = "crosslink")]
+            {
+                if build_config.is_vcrosslink() {
+                    TxVersion::VCrosslink
+                } else if consensus_branch_id == BranchId::Crosslink {
+                    TxVersion::V5
+                } else {
+                    TxVersion::suggested_for_branch(consensus_branch_id)
+                }
+            }
+            #[cfg(not(zcash_unstable = "crosslink"))]
+            TxVersion::suggested_for_branch(consensus_branch_id)
+        };
 
         let orchard_builder = bundle_version.and_then(|v| build_config.orchard_builder(v));
         let orchard_bundle_version = orchard_builder.as_ref().and(bundle_version);
@@ -1002,6 +1085,8 @@ impl<P: consensus::Parameters> Builder<P, ()> {
             orchard_builder,
             orchard_bundle_version,
             ironwood_builder,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
             _progress_notifier: (),
         }
     }
@@ -1031,6 +1116,8 @@ impl<P: consensus::Parameters> Builder<P, ()> {
             orchard_builder: self.orchard_builder,
             orchard_bundle_version: self.orchard_bundle_version,
             ironwood_builder: self.ironwood_builder,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
             _progress_notifier,
         }
     }
@@ -1265,6 +1352,19 @@ impl<P: consensus::Parameters, U> Builder<P, U> {
             .map_err(Error::TransparentBuild)
     }
 
+    /// Sets the staking action carried by a VCrosslink transaction.
+    #[cfg(zcash_unstable = "crosslink")]
+    pub fn put_staking_action<FE>(
+        &mut self,
+        staking_action: StakingAction,
+    ) -> Result<(), Error<FE>> {
+        if !self.tx_version.has_crosslink() {
+            return Err(Error::StakingActionUnsupported(self.tx_version));
+        }
+        self.staking_action = Some(staking_action);
+        Ok(())
+    }
+
     /// Returns the sum of the transparent, Sapling, Orchard, and zip233_amount value balances.
     fn value_balance(&self) -> Result<ZatBalance, BalanceError> {
         let value_balances = [
@@ -1292,6 +1392,10 @@ impl<P: consensus::Parameters, U> Builder<P, U> {
             )?,
             #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
             -ZatBalance::from(self.zip233_amount),
+            #[cfg(zcash_unstable = "crosslink")]
+            self.staking_action
+                .as_ref()
+                .map_or_else(ZatBalance::zero, StakingAction::value_balance_contribution),
         ];
 
         value_balances
@@ -1415,6 +1519,23 @@ impl<P: consensus::Parameters, U: sapling::builder::ProverProgress> Builder<P, U
                 )
             }
             BuildConfig::Standard { .. } => {
+                let fee = self.get_fee(fee_rule).map_err(Error::Fee)?;
+
+                self.build_internal::<Unauthorized, _, _, _, _>(
+                    |b| Ok(b.build()),
+                    |b, unauthed_tx, txid_parts| {
+                        authorize_transparent(b, unauthed_tx, txid_parts, transparent_signing_set)
+                    },
+                    sapling_extsks,
+                    orchard_saks,
+                    rng,
+                    spend_prover,
+                    output_prover,
+                    Some(fee),
+                )
+            }
+            #[cfg(zcash_unstable = "crosslink")]
+            BuildConfig::VCrosslink { .. } => {
                 let fee = self.get_fee(fee_rule).map_err(Error::Fee)?;
 
                 self.build_internal::<Unauthorized, _, _, _, _>(
@@ -1579,6 +1700,8 @@ impl<P: consensus::Parameters, U: sapling::builder::ProverProgress> Builder<P, U
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
         };
 
         //
@@ -1688,6 +1811,8 @@ impl<P: consensus::Parameters, U: sapling::builder::ProverProgress> Builder<P, U
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: unauthed_tx.staking_action,
         };
 
         // The unwrap() here is safe because the txid hashing
@@ -1715,6 +1840,11 @@ impl<P: consensus::Parameters, U> Builder<P, U> {
         let fee = self.get_fee(fee_rule).map_err(Error::Fee)?;
         self.check_version_compatibility::<FR::Error>(self.tx_version)?;
         self.check_coinbase_expiry_height::<FR::Error>()?;
+
+        #[cfg(zcash_unstable = "crosslink")]
+        if self.tx_version.has_crosslink() {
+            return Err(Error::CrosslinkPcztUnsupported);
+        }
 
         //
         // Consistency checks
@@ -1963,6 +2093,8 @@ mod tests {
             nu6_3: Some(BlockHeight::from_u32(10)),
             #[cfg(zcash_unstable = "nu7")]
             nu7: None,
+            #[cfg(zcash_unstable = "crosslink")]
+            crosslink: None,
         }
     }
 
@@ -1980,7 +2112,83 @@ mod tests {
             nu6_2: Some(BlockHeight::from_u32(9)),
             nu6_3: Some(BlockHeight::from_u32(10)),
             nu7: Some(BlockHeight::from_u32(11)),
+            #[cfg(zcash_unstable = "crosslink")]
+            crosslink: None,
         }
+    }
+
+    #[cfg(all(feature = "circuits", zcash_unstable = "crosslink"))]
+    fn crosslink_test_network() -> zcash_protocol::local_consensus::LocalNetwork {
+        /// Crosslink activation height for the builder fixture.
+        const CROSSLINK_ACTIVATION_HEIGHT: BlockHeight = BlockHeight::from_u32(11);
+
+        let mut network = nu6_3_test_network();
+        network.crosslink = Some(CROSSLINK_ACTIVATION_HEIGHT);
+        network
+    }
+
+    #[test]
+    #[cfg(all(feature = "circuits", zcash_unstable = "crosslink"))]
+    fn crosslink_builder_requires_explicit_config_and_accounts_for_bond_value() {
+        use bft_primitives::PubKeyId;
+
+        use crate::transaction::components::staking::{
+            BondId, CreateNewDelegationBond, StakingAction, StakingAuthChallenge, StakingAuthSig,
+        };
+
+        /// Bond identifier bytes for the builder fixture.
+        const BOND_ID_BYTES: [u8; 32] = [1; 32];
+        /// Challenge bytes for the builder fixture.
+        const CHALLENGE_BYTES: [u8; 32] = [2; 32];
+        /// Signature bytes for the builder fixture.
+        const SIGNATURE_BYTES: [u8; 64] = [3; 64];
+        /// Finalizer key bytes for the builder fixture.
+        const FINALIZER_KEY_BYTES: [u8; 32] = [4; 32];
+        /// Bond amount for the builder fixture.
+        const BOND_AMOUNT: Zatoshis = Zatoshis::const_from_u64(50_000);
+
+        let params = crosslink_test_network();
+        let target_height = params.activation_height(NetworkUpgrade::Crosslink).unwrap();
+        let action = StakingAction::CreateNewDelegationBond(CreateNewDelegationBond::new(
+            BondId::from_bytes(BOND_ID_BYTES),
+            StakingAuthChallenge::from_bytes(CHALLENGE_BYTES),
+            StakingAuthSig::from_bytes(SIGNATURE_BYTES),
+            PubKeyId::from_bytes(FINALIZER_KEY_BYTES),
+            BOND_AMOUNT,
+        ));
+
+        let mut standard = Builder::new(
+            params,
+            target_height,
+            BuildConfig::Standard {
+                sapling_anchor: None,
+                orchard_anchor: None,
+                ironwood_anchor: None,
+                orchard_padding: BundlePadding::DEFAULT,
+                ironwood_padding: BundlePadding::DEFAULT,
+            },
+        );
+        assert_eq!(standard.tx_version, TxVersion::V5);
+        assert_matches!(
+            standard.put_staking_action::<Infallible>(action),
+            Err(Error::StakingActionUnsupported(TxVersion::V5))
+        );
+
+        let mut crosslink = Builder::new(
+            params,
+            target_height,
+            BuildConfig::VCrosslink {
+                sapling_anchor: None,
+                orchard_anchor: None,
+                orchard_padding: BundlePadding::DEFAULT,
+            },
+        );
+        crosslink.put_staking_action::<Infallible>(action).unwrap();
+        assert_eq!(crosslink.tx_version, TxVersion::VCrosslink);
+        assert_eq!(
+            crosslink.value_balance().unwrap(),
+            -ZatBalance::from(BOND_AMOUNT)
+        );
     }
 
     #[test]
@@ -2611,6 +2819,8 @@ mod tests {
             orchard_builder: None,
             orchard_bundle_version: None,
             ironwood_builder: None,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
             _progress_notifier: (),
         };
 

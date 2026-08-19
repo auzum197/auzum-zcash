@@ -47,6 +47,12 @@ use zcash_protocol::constants::{
 
 use zcash_protocol::constants::{V6_TX_VERSION, V6_VERSION_GROUP_ID};
 
+#[cfg(zcash_unstable = "crosslink")]
+use zcash_protocol::constants::{VCROSSLINK_TX_VERSION, VCROSSLINK_VERSION_GROUP_ID};
+
+#[cfg(zcash_unstable = "crosslink")]
+use self::components::staking::StakingAction;
+
 pub use zcash_protocol::TxId;
 
 /// The set of defined transaction format versions.
@@ -76,6 +82,9 @@ pub enum TxVersion {
     V5,
     /// Transaction version 6, specified in [ZIP 229](https://zips.z.cash/zip-0229).
     V6,
+    /// The version 7 (VCrosslink) transaction format, which carries a staking action.
+    #[cfg(zcash_unstable = "crosslink")]
+    VCrosslink,
 }
 
 impl TxVersion {
@@ -90,6 +99,8 @@ impl TxVersion {
                 (V4_TX_VERSION, V4_VERSION_GROUP_ID) => Ok(TxVersion::V4),
                 (V5_TX_VERSION, V5_VERSION_GROUP_ID) => Ok(TxVersion::V5),
                 (V6_TX_VERSION, V6_VERSION_GROUP_ID) => Ok(TxVersion::V6),
+                #[cfg(zcash_unstable = "crosslink")]
+                (VCROSSLINK_TX_VERSION, VCROSSLINK_VERSION_GROUP_ID) => Ok(TxVersion::VCrosslink),
                 _ => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Unknown transaction format",
@@ -119,6 +130,8 @@ impl TxVersion {
                 TxVersion::V4 => V4_TX_VERSION,
                 TxVersion::V5 => V5_TX_VERSION,
                 TxVersion::V6 => V6_TX_VERSION,
+                #[cfg(zcash_unstable = "crosslink")]
+                TxVersion::VCrosslink => VCROSSLINK_TX_VERSION,
             }
     }
 
@@ -129,6 +142,8 @@ impl TxVersion {
             TxVersion::V4 => V4_VERSION_GROUP_ID,
             TxVersion::V5 => V5_VERSION_GROUP_ID,
             TxVersion::V6 => V6_VERSION_GROUP_ID,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => VCROSSLINK_VERSION_GROUP_ID,
         }
     }
 
@@ -147,6 +162,8 @@ impl TxVersion {
             TxVersion::V3 | TxVersion::V4 => true,
             TxVersion::V5 => false,
             TxVersion::V6 => false,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => false,
         }
     }
 
@@ -161,6 +178,8 @@ impl TxVersion {
             TxVersion::V4 => true,
             TxVersion::V5 => true,
             TxVersion::V6 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => true,
         }
     }
 
@@ -170,6 +189,8 @@ impl TxVersion {
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 => false,
             TxVersion::V5 => true,
             TxVersion::V6 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => true,
         }
     }
 
@@ -178,7 +199,15 @@ impl TxVersion {
         match self {
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 | TxVersion::V5 => false,
             TxVersion::V6 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => false,
         }
+    }
+
+    /// Returns `true` if this transaction version carries a staking action.
+    #[cfg(zcash_unstable = "crosslink")]
+    pub fn has_crosslink(&self) -> bool {
+        matches!(self, TxVersion::VCrosslink)
     }
 
     #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
@@ -186,6 +215,8 @@ impl TxVersion {
         match self {
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 | TxVersion::V5 => false,
             TxVersion::V6 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => false,
         }
     }
 
@@ -204,6 +235,8 @@ impl TxVersion {
             BranchId::Nu6_3 => TxVersion::V6,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => TxVersion::V6,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => TxVersion::VCrosslink,
         }
     }
 
@@ -221,6 +254,8 @@ impl TxVersion {
                 Nu6_3 => true,
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => false, // ZIP 2003
+                #[cfg(zcash_unstable = "crosslink")]
+                Crosslink => true,
             },
             TxVersion::V5 => match consensus_branch_id {
                 Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy => false,
@@ -228,6 +263,8 @@ impl TxVersion {
                 Nu6_3 => true,
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => true,
+                #[cfg(zcash_unstable = "crosslink")]
+                Crosslink => true,
             },
             TxVersion::V6 => match consensus_branch_id {
                 Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy | Nu5 | Nu6
@@ -235,9 +272,33 @@ impl TxVersion {
                 Nu6_3 => true, // Ironwood / NU6.3
                 #[cfg(zcash_unstable = "nu7")]
                 Nu7 => true, // ZIP 230 or ZIP 248, whichever is chosen for activation
+                #[cfg(zcash_unstable = "crosslink")]
+                Crosslink => false,
+            },
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => match consensus_branch_id {
+                Crosslink => true,
+                Sprout | Overwinter | Sapling | Blossom | Heartwood | Canopy | Nu5 | Nu6
+                | Nu6_1 | Nu6_2 | Nu6_3 => false,
+                #[cfg(zcash_unstable = "nu7")]
+                Nu7 => false,
             },
         }
     }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+fn wire_consensus_branch_id(version: TxVersion, consensus_branch_id: BranchId) -> u32 {
+    if version == TxVersion::VCrosslink {
+        return BranchId::Nu6_1.into();
+    }
+
+    consensus_branch_id.into()
+}
+
+#[cfg(not(zcash_unstable = "crosslink"))]
+fn wire_consensus_branch_id(_version: TxVersion, consensus_branch_id: BranchId) -> u32 {
+    consensus_branch_id.into()
 }
 
 /// Authorization state for a bundle of transaction data.
@@ -320,6 +381,8 @@ pub struct TransactionData<A: Authorization> {
     sapling_bundle: Option<sapling::Bundle<A::SaplingAuth, ZatBalance>>,
     orchard_bundle: Option<orchard::bundle::Bundle<A::OrchardAuth, ZatBalance>>,
     ironwood_bundle: Option<orchard::bundle::Bundle<A::OrchardAuth, ZatBalance>>,
+    #[cfg(zcash_unstable = "crosslink")]
+    staking_action: Option<StakingAction>,
 }
 
 impl Clone for TransactionData<Authorized> {
@@ -336,6 +399,8 @@ impl Clone for TransactionData<Authorized> {
             sapling_bundle: self.sapling_bundle.clone(),
             orchard_bundle: self.orchard_bundle.clone(),
             ironwood_bundle: self.ironwood_bundle.clone(),
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
         }
     }
 }
@@ -378,6 +443,8 @@ impl<A: Authorization> TransactionData<A> {
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle: None,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
         }
     }
 
@@ -416,6 +483,37 @@ impl<A: Authorization> TransactionData<A> {
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
+        }
+    }
+
+    /// Constructs a VCrosslink [`TransactionData`] from its constituent parts,
+    /// including the staking action.
+    #[cfg(zcash_unstable = "crosslink")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts_vcrosslink(
+        consensus_branch_id: BranchId,
+        lock_time: u32,
+        expiry_height: BlockHeight,
+        transparent_bundle: Option<transparent::Bundle<A::TransparentAuth>>,
+        sapling_bundle: Option<sapling::Bundle<A::SaplingAuth, ZatBalance>>,
+        orchard_bundle: Option<orchard::Bundle<A::OrchardAuth, ZatBalance>>,
+        staking_action: Option<StakingAction>,
+    ) -> Self {
+        TransactionData {
+            version: TxVersion::VCrosslink,
+            consensus_branch_id,
+            lock_time,
+            expiry_height,
+            #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
+            zip233_amount: Zatoshis::ZERO,
+            transparent_bundle,
+            sprout_bundle: None,
+            sapling_bundle,
+            orchard_bundle,
+            ironwood_bundle: None,
+            staking_action,
         }
     }
 
@@ -457,6 +555,12 @@ impl<A: Authorization> TransactionData<A> {
         self.ironwood_bundle.as_ref()
     }
 
+    /// Returns the staking action carried by this transaction, if any.
+    #[cfg(zcash_unstable = "crosslink")]
+    pub fn staking_action(&self) -> Option<&StakingAction> {
+        self.staking_action.as_ref()
+    }
+
     #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
     pub fn zip233_amount(&self) -> Zatoshis {
         self.zip233_amount
@@ -494,6 +598,10 @@ impl<A: Authorization> TransactionData<A> {
                         .map_or_else(ZatBalance::zero, |b| *b.value_balance()),
                     #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
                     -ZatBalance::from(self.zip233_amount),
+                    #[cfg(zcash_unstable = "crosslink")]
+                    self.staking_action
+                        .as_ref()
+                        .map_or_else(ZatBalance::zero, StakingAction::value_balance_contribution),
                 ];
 
                 let overall_balance = value_balances
@@ -526,6 +634,8 @@ impl<A: Authorization> TransactionData<A> {
             digester.digest_sapling(self.version, self.sapling_bundle.as_ref()),
             digester.digest_orchard(self.version, self.orchard_bundle.as_ref()),
             digester.digest_ironwood(self.ironwood_bundle.as_ref()),
+            #[cfg(zcash_unstable = "crosslink")]
+            digester.digest_crosslink(&self.staking_action),
         )
     }
 
@@ -577,6 +687,8 @@ impl<A: Authorization> TransactionData<A> {
             sapling_bundle: f_sapling(self.sapling_bundle),
             orchard_bundle: f_orchard(self.orchard_bundle),
             ironwood_bundle: f_orchard(self.ironwood_bundle),
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
         }
     }
 
@@ -616,6 +728,8 @@ impl<A: Authorization> TransactionData<A> {
             sapling_bundle: f_sapling(self.sapling_bundle)?,
             orchard_bundle: f_orchard(self.orchard_bundle)?,
             ironwood_bundle: f_orchard(self.ironwood_bundle)?,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
         })
     }
 
@@ -659,6 +773,8 @@ impl<A: Authorization> TransactionData<A> {
                     |f, a| f.map_authorization(a),
                 )
             }),
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: self.staking_action,
         }
     }
 }
@@ -691,6 +807,8 @@ impl Transaction {
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 => Self::from_data_v4(data),
             TxVersion::V5 => Ok(Self::from_data_v5(data)),
             TxVersion::V6 => Ok(Self::from_data_v6(data)),
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => Ok(Self::from_data_vcrosslink(data)),
         }
     }
 
@@ -725,6 +843,17 @@ impl Transaction {
         Transaction { txid, data }
     }
 
+    #[cfg(zcash_unstable = "crosslink")]
+    fn from_data_vcrosslink(data: TransactionData<Authorized>) -> Self {
+        let txid = to_txid(
+            data.version,
+            data.consensus_branch_id,
+            &data.digest(TxIdDigester),
+        );
+
+        Transaction { txid, data }
+    }
+
     pub fn into_data(self) -> TransactionData<Authorized> {
         self.data
     }
@@ -743,6 +872,8 @@ impl Transaction {
             }
             TxVersion::V5 => Self::read_v5(reader.into_base_reader(), version),
             TxVersion::V6 => Self::read_v6(reader.into_base_reader(), version),
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => Self::read_vcrosslink(reader.into_base_reader(), version),
         }
     }
 
@@ -820,6 +951,8 @@ impl Transaction {
                 }),
                 orchard_bundle: None,
                 ironwood_bundle: None,
+                #[cfg(zcash_unstable = "crosslink")]
+                staking_action: None,
             },
         })
     }
@@ -871,9 +1004,49 @@ impl Transaction {
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle: None,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
         };
 
         Ok(Self::from_data_v5(data))
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    fn read_vcrosslink<R: Read>(mut reader: R, version: TxVersion) -> io::Result<Self> {
+        let (wire_branch_id, lock_time, expiry_height) = Self::read_header_fragment(&mut reader)?;
+        if wire_branch_id != BranchId::Nu6_1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid VCrosslink consensus branch id",
+            ));
+        }
+        let consensus_branch_id = BranchId::Crosslink;
+
+        #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
+        let zip233_amount = Zatoshis::ZERO;
+
+        let transparent_bundle = Self::read_transparent(&mut reader)?;
+        let sapling_bundle = sapling_serialization::read_v5_bundle(&mut reader)?;
+        let orchard_bundle =
+            orchard_serialization::read_v5_bundle(&mut reader, consensus_branch_id)?;
+        let staking_action = StakingAction::read(&mut reader)?;
+
+        let data = TransactionData {
+            version,
+            consensus_branch_id,
+            lock_time,
+            expiry_height,
+            #[cfg(all(zcash_unstable = "nu7", feature = "zip-233"))]
+            zip233_amount,
+            transparent_bundle,
+            sprout_bundle: None,
+            sapling_bundle,
+            orchard_bundle,
+            ironwood_bundle: None,
+            staking_action,
+        };
+
+        Ok(Self::from_data_vcrosslink(data))
     }
 
     fn read_v6<R: Read>(mut reader: R, version: TxVersion) -> io::Result<Self> {
@@ -904,6 +1077,8 @@ impl Transaction {
             sapling_bundle,
             orchard_bundle,
             ironwood_bundle,
+            #[cfg(zcash_unstable = "crosslink")]
+            staking_action: None,
         };
 
         Ok(Self::from_data_v6(data))
@@ -961,6 +1136,8 @@ impl Transaction {
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 => self.write_v4(writer),
             TxVersion::V5 => self.write_v5(writer),
             TxVersion::V6 => self.write_v6(writer),
+            #[cfg(zcash_unstable = "crosslink")]
+            TxVersion::VCrosslink => self.write_vcrosslink(writer),
         }
     }
 
@@ -1049,9 +1226,35 @@ impl Transaction {
         Ok(())
     }
 
+    #[cfg(zcash_unstable = "crosslink")]
+    pub fn write_vcrosslink<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self.sprout_bundle.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Sprout components cannot be present when serializing to the VCrosslink transaction format.",
+            ));
+        }
+        if self.ironwood_bundle.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Ironwood components cannot be present when serializing to the VCrosslink transaction format.",
+            ));
+        }
+        self.write_v5_header(&mut writer)?;
+        self.write_transparent(&mut writer)?;
+        self.write_v5_sapling(&mut writer)?;
+        orchard_serialization::write_v5_bundle(self.orchard_bundle.as_ref(), &mut writer)?;
+        StakingAction::write(&self.staking_action, &mut writer)?;
+
+        Ok(())
+    }
+
     pub fn write_v5_header<W: Write>(&self, mut writer: W) -> io::Result<()> {
         self.version.write(&mut writer)?;
-        writer.write_u32_le(u32::from(self.consensus_branch_id))?;
+        writer.write_u32_le(wire_consensus_branch_id(
+            self.version,
+            self.consensus_branch_id,
+        ))?;
         writer.write_u32_le(self.lock_time)?;
         writer.write_u32_le(u32::from(self.expiry_height))?;
         Ok(())
@@ -1105,6 +1308,8 @@ pub struct TxDigests<A> {
     /// ID is derived from these digests, `None` is combined as the empty Ironwood bundle digest
     /// using the Ironwood bundle personalization.
     pub ironwood_digest: Option<A>,
+    #[cfg(zcash_unstable = "crosslink")]
+    pub crosslink_digest: Option<A>,
 }
 
 pub trait TransactionDigest<A: Authorization> {
@@ -1114,6 +1319,8 @@ pub trait TransactionDigest<A: Authorization> {
     type OrchardDigest;
     /// The digest type produced for the Ironwood bundle in version 6 transactions.
     type IronwoodDigest;
+    #[cfg(zcash_unstable = "crosslink")]
+    type CrosslinkDigest;
 
     type Digest;
 
@@ -1156,6 +1363,9 @@ pub trait TransactionDigest<A: Authorization> {
         ironwood_bundle: Option<&orchard::Bundle<A::OrchardAuth, ZatBalance>>,
     ) -> Self::IronwoodDigest;
 
+    #[cfg(zcash_unstable = "crosslink")]
+    fn digest_crosslink(&self, staking_action: &Option<StakingAction>) -> Self::CrosslinkDigest;
+
     fn combine(
         &self,
         header_digest: Self::HeaderDigest,
@@ -1163,6 +1373,7 @@ pub trait TransactionDigest<A: Authorization> {
         sapling_digest: Self::SaplingDigest,
         orchard_digest: Self::OrchardDigest,
         ironwood_digest: Self::IronwoodDigest,
+        #[cfg(zcash_unstable = "crosslink")] crosslink_digest: Self::CrosslinkDigest,
     ) -> Self::Digest;
 }
 
@@ -1206,6 +1417,8 @@ pub mod testing {
             BranchId::Nu6_3 => Just(TxVersion::V6).boxed(),
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => Just(TxVersion::V6).boxed(),
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => Just(TxVersion::VCrosslink).boxed(),
         }
     }
 
@@ -1232,6 +1445,8 @@ pub mod testing {
                 sapling_bundle,
                 orchard_bundle,
                 ironwood_bundle,
+                #[cfg(zcash_unstable = "crosslink")]
+                staking_action: None,
             }
         }
     }
@@ -1261,6 +1476,8 @@ pub mod testing {
                 sapling_bundle,
                 orchard_bundle,
                 ironwood_bundle,
+                #[cfg(zcash_unstable = "crosslink")]
+                staking_action: None,
             }
         }
     }
@@ -1288,6 +1505,8 @@ pub mod testing {
                 sapling_bundle,
                 orchard_bundle,
                 ironwood_bundle,
+                #[cfg(zcash_unstable = "crosslink")]
+                staking_action: None,
             }
         }
     }

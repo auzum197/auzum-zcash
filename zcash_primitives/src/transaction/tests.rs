@@ -14,7 +14,6 @@ use {
     alloc::vec::Vec,
     blake2b_simd::Hash as Blake2bHash,
     core::ops::Deref,
-    proptest::{strategy::ValueTree, test_runner::TestRunner},
     zcash_protocol::{consensus::BranchId, value::Zatoshis},
     zcash_script::script,
 };
@@ -28,6 +27,7 @@ use {
     },
     blake2b_simd::Params,
     ff::PrimeField,
+    proptest::{strategy::ValueTree, test_runner::TestRunner},
     zcash_protocol::value::ZatBalance,
 };
 
@@ -49,6 +49,36 @@ fn tx_read_write() {
     let mut encoded = Vec::with_capacity(data.len());
     tx.write(&mut encoded).unwrap();
     assert_eq!(&data[..], &encoded[..]);
+}
+
+#[test]
+fn legacy_transaction_id_vectors() {
+    /// Empty version 1 transaction.
+    const V1_WIRE: &str = "01000000000000000000";
+    /// Empty version 1 transaction ID.
+    const V1_TXID: &str = "43ec7a579f5561a42a7e9637ad4156672735a658be2752181801f723ba3316d2";
+    /// Empty version 2 transaction.
+    const V2_WIRE: &str = "0200000000000000000000";
+    /// Empty version 2 transaction ID.
+    const V2_TXID: &str = "6f5c45adbc84c3df02f1ca2523cbb3b4914ed5039791ff431c98d4ebe4a6e8c7";
+    /// Empty version 3 transaction.
+    const V3_WIRE: &str = "030000807082c4030000000000000000000000";
+    /// Empty version 3 transaction ID.
+    const V3_TXID: &str = "a6ac970553e506a7624d019ad5a61db230f9e419ce8452c69fbfaf2f3e3ec3df";
+
+    for (wire, branch, txid) in [
+        (V1_WIRE, BranchId::Sprout, V1_TXID),
+        (V2_WIRE, BranchId::Sprout, V2_TXID),
+        (V3_WIRE, BranchId::Overwinter, V3_TXID),
+    ] {
+        let wire = hex::decode(wire).unwrap();
+        let tx = Transaction::read(&wire[..], branch).unwrap();
+        assert_eq!(hex::encode(tx.txid().as_ref()), txid);
+
+        let mut encoded = Vec::new();
+        tx.write(&mut encoded).unwrap();
+        assert_eq!(encoded, wire);
+    }
 }
 
 #[test]
@@ -88,6 +118,8 @@ fn v5_auth_commitment_in_nu6_3_does_not_include_ironwood_digest() {
     expected.update(empty_hash(b"ZTxAuthTransHash").as_bytes());
     expected.update(empty_hash(b"ZTxAuthSapliHash").as_bytes());
     expected.update(empty_hash(b"ZTxAuthOrchaHash").as_bytes());
+    #[cfg(zcash_unstable = "crosslink")]
+    expected.update(empty_hash(b"ZTxCrosslinkHash").as_bytes());
 
     let tx = TransactionData::from_parts(
         TxVersion::V5,
@@ -120,6 +152,8 @@ fn v6_empty_auth_commitment_uses_v6_shielded_personalizations() {
     expected.update(empty_hash(b"ZTxAuthTransHash").as_bytes());
     expected.update(empty_hash(b"ZTxAuthSapliH_v6").as_bytes());
     expected.update(empty_hash(b"ZTxAuthOrchaH_v6").as_bytes());
+    #[cfg(zcash_unstable = "crosslink")]
+    expected.update(empty_hash(b"ZTxCrosslinkHash").as_bytes());
     expected.update(empty_hash(b"ZTxAuthIrnwdH_v6").as_bytes());
 
     let tx =
@@ -158,6 +192,204 @@ fn v6_empty_orchard_txid_uses_v6_orchard_personalization() {
 
     let expected = expected.finalize();
     assert_eq!(&tx.txid().as_ref()[..], expected.as_bytes());
+}
+
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+/// Width of Crosslink key and challenge fixtures.
+const CROSSLINK_HASH_BYTES: usize = 32;
+
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+/// Width of Crosslink signature fixtures.
+const CROSSLINK_SIGNATURE_BYTES: usize = 64;
+
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+fn test_staking_action(byte: u8) -> crate::transaction::components::staking::StakingAction {
+    use crate::transaction::components::staking::{
+        BeginDelegationUnbonding, BondId, StakingAction, StakingAuthChallenge, StakingAuthSig,
+    };
+
+    /// Byte offset for the challenge fixture.
+    const CHALLENGE_BYTE_OFFSET: u8 = 1;
+    /// Byte offset for the signature fixture.
+    const SIGNATURE_BYTE_OFFSET: u8 = 2;
+
+    StakingAction::BeginDelegationUnbonding(BeginDelegationUnbonding::new(
+        BondId::from_bytes([byte; CROSSLINK_HASH_BYTES]),
+        StakingAuthChallenge::from_bytes(
+            [byte.wrapping_add(CHALLENGE_BYTE_OFFSET); CROSSLINK_HASH_BYTES],
+        ),
+        StakingAuthSig::from_bytes(
+            [byte.wrapping_add(SIGNATURE_BYTE_OFFSET); CROSSLINK_SIGNATURE_BYTES],
+        ),
+    ))
+}
+
+#[test]
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+fn vcrosslink_conformance_vectors() {
+    use crate::transaction::components::staking::{
+        BeginDelegationUnbonding, BondId, StakingAction, StakingAuthChallenge, StakingAuthSig,
+    };
+    use crate::transaction::{Authorized, sighash::signature_hash};
+
+    const LOCK_TIME: u32 = 0x1122_3344;
+    const EXPIRY_HEIGHT: zcash_protocol::consensus::BlockHeight =
+        zcash_protocol::consensus::BlockHeight::from_u32(0x5566_7788);
+    const BOND_BYTE: u8 = 0x11;
+    const CHALLENGE_BYTE: u8 = 0x22;
+    const SIGNATURE_BYTE: u8 = 0x33;
+    const ABSENT_WIRE: &str = "07000080fefffffff04dec4d4433221188776655000000000000";
+    const ABSENT_TXID: &str = "5ebaf40800bef544b96a1ef477d269857f766a8d5c05535e77ccec27464ca7fe";
+    const ABSENT_AUTH: &str = "d825d35d4c8d1e14f90d26bcbdd40d5250d5bd918e6af48dbad25c86dd02ab28";
+    const ABSENT_SIGHASH: &str = "5ebaf40800bef544b96a1ef477d269857f766a8d5c05535e77ccec27464ca7fe";
+    const PRESENT_WIRE: &str = concat!(
+        "07000080fefffffff04dec4d4433221188776655000000000002",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+    );
+    const PRESENT_TXID: &str = "4e6a21f9024806d6e52292e3296508a13040eb3eca323b86699c184fe09ec633";
+    const PRESENT_AUTH: &str = "c0841d72569d0ef382a9cc33a178c6a2a658c48c0f17f58c4be019d74b7666f8";
+    const PRESENT_SIGHASH: &str =
+        "4e6a21f9024806d6e52292e3296508a13040eb3eca323b86699c184fe09ec633";
+
+    fn assert_vector(
+        staking_action: Option<StakingAction>,
+        expected_wire: &str,
+        expected_txid: &str,
+        expected_auth: &str,
+        expected_sighash: &str,
+    ) {
+        let data = TransactionData::<Authorized>::from_parts_vcrosslink(
+            BranchId::Crosslink,
+            LOCK_TIME,
+            EXPIRY_HEIGHT,
+            None,
+            None,
+            None,
+            staking_action,
+        );
+        let sig_data = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
+            BranchId::Crosslink,
+            LOCK_TIME,
+            EXPIRY_HEIGHT,
+            None,
+            None,
+            None,
+            staking_action,
+        );
+        let sighash = signature_hash(
+            &sig_data,
+            &SignableInput::Shielded,
+            &sig_data.digest(TxIdDigester),
+        );
+        let tx = data.freeze().unwrap();
+        let mut wire = Vec::new();
+        tx.write(&mut wire).unwrap();
+
+        assert_eq!(hex::encode(&wire), expected_wire);
+        assert_eq!(hex::encode(tx.txid().as_ref()), expected_txid);
+        assert_eq!(hex::encode(tx.auth_commitment().as_ref()), expected_auth);
+        assert_eq!(hex::encode(sighash.as_ref()), expected_sighash);
+
+        let decoded = Transaction::read(&wire[..], BranchId::Crosslink).unwrap();
+        let mut round_trip = Vec::new();
+        decoded.write(&mut round_trip).unwrap();
+        assert_eq!(round_trip, wire);
+    }
+
+    let action = StakingAction::BeginDelegationUnbonding(BeginDelegationUnbonding::new(
+        BondId::from_bytes([BOND_BYTE; CROSSLINK_HASH_BYTES]),
+        StakingAuthChallenge::from_bytes([CHALLENGE_BYTE; CROSSLINK_HASH_BYTES]),
+        StakingAuthSig::from_bytes([SIGNATURE_BYTE; CROSSLINK_SIGNATURE_BYTES]),
+    ));
+
+    assert_vector(None, ABSENT_WIRE, ABSENT_TXID, ABSENT_AUTH, ABSENT_SIGHASH);
+    assert_vector(
+        Some(action),
+        PRESENT_WIRE,
+        PRESENT_TXID,
+        PRESENT_AUTH,
+        PRESENT_SIGHASH,
+    );
+}
+
+#[test]
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
+    use crate::transaction::{Authorized, sighash::signature_hash};
+
+    /// Lock time used by the transaction fixtures.
+    const TEST_LOCK_TIME: u32 = 0;
+    /// Expiry height used by the transaction fixtures.
+    const TEST_EXPIRY_HEIGHT: zcash_protocol::consensus::BlockHeight =
+        zcash_protocol::consensus::BlockHeight::from_u32(1);
+    /// Byte pattern for the first staking action.
+    const FIRST_ACTION_BYTE: u8 = 1;
+    /// Byte pattern for the second staking action.
+    const SECOND_ACTION_BYTE: u8 = 2;
+
+    let tx_data_a = TransactionData::<Authorized>::from_parts_vcrosslink(
+        BranchId::Crosslink,
+        TEST_LOCK_TIME,
+        TEST_EXPIRY_HEIGHT,
+        None,
+        None,
+        None,
+        Some(test_staking_action(FIRST_ACTION_BYTE)),
+    );
+    let txid_parts_a = tx_data_a.digest(TxIdDigester);
+    let sig_data_a = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
+        BranchId::Crosslink,
+        TEST_LOCK_TIME,
+        TEST_EXPIRY_HEIGHT,
+        None,
+        None,
+        None,
+        Some(test_staking_action(FIRST_ACTION_BYTE)),
+    );
+    let sighash_a = signature_hash(
+        &sig_data_a,
+        &SignableInput::Shielded,
+        &sig_data_a.digest(TxIdDigester),
+    );
+    let tx_a = tx_data_a.freeze().unwrap();
+
+    let tx_data_b = TransactionData::<Authorized>::from_parts_vcrosslink(
+        BranchId::Crosslink,
+        TEST_LOCK_TIME,
+        TEST_EXPIRY_HEIGHT,
+        None,
+        None,
+        None,
+        Some(test_staking_action(SECOND_ACTION_BYTE)),
+    );
+    let sig_data_b = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
+        BranchId::Crosslink,
+        TEST_LOCK_TIME,
+        TEST_EXPIRY_HEIGHT,
+        None,
+        None,
+        None,
+        Some(test_staking_action(SECOND_ACTION_BYTE)),
+    );
+    let sighash_b = signature_hash(
+        &sig_data_b,
+        &SignableInput::Shielded,
+        &sig_data_b.digest(TxIdDigester),
+    );
+    let tx_b = tx_data_b.freeze().unwrap();
+
+    assert!(txid_parts_a.crosslink_digest.is_some());
+    assert_ne!(tx_a.txid(), tx_b.txid());
+    assert_ne!(sighash_a.as_ref(), sighash_b.as_ref());
+
+    let mut encoded = Vec::new();
+    tx_a.write(&mut encoded).unwrap();
+    let decoded = Transaction::read(&encoded[..], BranchId::Crosslink).unwrap();
+    assert_eq!(decoded.txid(), tx_a.txid());
+    assert_eq!(decoded.staking_action(), tx_a.staking_action());
 }
 
 #[cfg(all(test, not(zcash_unstable = "nu7")))]
@@ -872,6 +1104,15 @@ proptest! {
     }
 }
 
+#[cfg(all(test, zcash_unstable = "crosslink"))]
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(10))]
+    #[test]
+    fn tx_serialization_roundtrip_crosslink(tx in arb_tx(BranchId::Crosslink)) {
+        check_roundtrip(tx)?;
+    }
+}
+
 #[test]
 fn zip_0143() {
     for tv in self::data::zip_0143::make_test_vectors() {
@@ -965,6 +1206,7 @@ fn zip_0244() {
         let tx = Transaction::read(&tv.tx[..], BranchId::Nu5).unwrap();
 
         assert_eq!(tx.txid.as_ref(), &tv.txid);
+        #[cfg(not(zcash_unstable = "crosslink"))]
         assert_eq!(tx.auth_commitment().as_ref(), &tv.auth_digest);
 
         let txdata = tx.deref();

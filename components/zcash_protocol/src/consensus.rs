@@ -502,6 +502,8 @@ impl Parameters for MainNetwork {
             NetworkUpgrade::Nu6_3 => Some(BlockHeight(3_428_143)),
             #[cfg(zcash_unstable = "nu7")]
             NetworkUpgrade::Nu7 => None,
+            #[cfg(zcash_unstable = "crosslink")]
+            NetworkUpgrade::Crosslink => None,
         }
     }
 }
@@ -535,6 +537,8 @@ impl Parameters for TestNetwork {
             NetworkUpgrade::Nu6_3 => Some(BlockHeight(4_134_000)),
             #[cfg(zcash_unstable = "nu7")]
             NetworkUpgrade::Nu7 => None,
+            #[cfg(zcash_unstable = "crosslink")]
+            NetworkUpgrade::Crosslink => None,
         }
     }
 }
@@ -616,6 +620,11 @@ pub enum NetworkUpgrade {
     /// [Nu7 (proposed)]: https://z.cash/upgrade/nu7/
     #[cfg(zcash_unstable = "nu7")]
     Nu7,
+    /// The Crosslink network upgrade.
+    ///
+    /// This is an in-development upgrade with no assigned mainnet activation height.
+    #[cfg(zcash_unstable = "crosslink")]
+    Crosslink,
 }
 
 #[cfg(feature = "std")]
@@ -636,6 +645,8 @@ impl fmt::Display for NetworkUpgrade {
             NetworkUpgrade::Nu6_3 => write!(f, "Nu6.3"),
             #[cfg(zcash_unstable = "nu7")]
             NetworkUpgrade::Nu7 => write!(f, "Nu7"),
+            #[cfg(zcash_unstable = "crosslink")]
+            NetworkUpgrade::Crosslink => write!(f, "Crosslink"),
         }
     }
 }
@@ -658,6 +669,8 @@ impl NetworkUpgrade {
             NetworkUpgrade::Nu6_3 => BranchId::Nu6_3,
             #[cfg(zcash_unstable = "nu7")]
             NetworkUpgrade::Nu7 => BranchId::Nu7,
+            #[cfg(zcash_unstable = "crosslink")]
+            NetworkUpgrade::Crosslink => BranchId::Crosslink,
         }
     }
 }
@@ -679,6 +692,8 @@ const UPGRADES_IN_ORDER: &[NetworkUpgrade] = &[
     NetworkUpgrade::Nu6_3,
     #[cfg(zcash_unstable = "nu7")]
     NetworkUpgrade::Nu7,
+    #[cfg(zcash_unstable = "crosslink")]
+    NetworkUpgrade::Crosslink,
 ];
 
 /// The "grace period" defined in [ZIP 212].
@@ -694,6 +709,15 @@ pub const ZIP212_GRACE_PERIOD: u32 = 32256;
 ///
 /// [txnconsensus]: https://zips.z.cash/protocol/protocol.pdf#txnconsensus
 pub const COINBASE_MATURITY_BLOCKS: u32 = 100;
+
+/// The maximum chain reorganisation depth permitted under Crosslink's BFT finality.
+///
+/// This threshold bounds the length of the best non-finalized chain. It is one less than
+/// [`COINBASE_MATURITY_BLOCKS`].
+///
+/// This is a prototype value that is not yet finalized.
+#[cfg(zcash_unstable = "crosslink")]
+pub const MAX_BLOCK_REORG_HEIGHT: u32 = COINBASE_MATURITY_BLOCKS - 1;
 
 /// A globally-unique identifier for a set of consensus rules within the Zcash chain.
 ///
@@ -735,6 +759,9 @@ pub enum BranchId {
     /// The consensus rules to be deployed by [`NetworkUpgrade::Nu7`].
     #[cfg(zcash_unstable = "nu7")]
     Nu7,
+    /// The consensus rules to be deployed by [`NetworkUpgrade::Crosslink`].
+    #[cfg(zcash_unstable = "crosslink")]
+    Crosslink,
 }
 
 #[cfg(feature = "std")]
@@ -758,6 +785,9 @@ impl TryFrom<u32> for BranchId {
             0x37a5_165b => Ok(BranchId::Nu6_3),
             #[cfg(zcash_unstable = "nu7")]
             0xffff_ffff => Ok(BranchId::Nu7),
+            // Unassigned placeholder branch id, distinct from Nu7's `0xffff_ffff`.
+            #[cfg(zcash_unstable = "crosslink")]
+            0xffff_fffe => Ok(BranchId::Crosslink),
             _ => Err("Unknown consensus branch ID"),
         }
     }
@@ -779,6 +809,8 @@ impl From<BranchId> for u32 {
             BranchId::Nu6_3 => 0x37a5_165b,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => 0xffff_ffff,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => 0xffff_fffe,
         }
     }
 }
@@ -818,6 +850,8 @@ impl BranchId {
             BranchId::Nu6_3 => NetworkUpgrade::Nu6_3,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => NetworkUpgrade::Nu7,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => NetworkUpgrade::Crosslink,
         })
     }
 
@@ -881,13 +915,23 @@ impl BranchId {
                 .map(|lower| {
                     #[cfg(zcash_unstable = "nu7")]
                     let upper = params.activation_height(NetworkUpgrade::Nu7);
-                    #[cfg(not(zcash_unstable = "nu7"))]
+                    #[cfg(all(not(zcash_unstable = "nu7"), zcash_unstable = "crosslink"))]
+                    let upper = params.activation_height(NetworkUpgrade::Crosslink);
+                    #[cfg(all(not(zcash_unstable = "nu7"), not(zcash_unstable = "crosslink")))]
                     let upper = None;
                     (lower, upper)
                 }),
             #[cfg(zcash_unstable = "nu7")]
-            BranchId::Nu7 => params
-                .activation_height(NetworkUpgrade::Nu7)
+            BranchId::Nu7 => params.activation_height(NetworkUpgrade::Nu7).map(|lower| {
+                #[cfg(zcash_unstable = "crosslink")]
+                let upper = params.activation_height(NetworkUpgrade::Crosslink);
+                #[cfg(not(zcash_unstable = "crosslink"))]
+                let upper = None;
+                (lower, upper)
+            }),
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => params
+                .activation_height(NetworkUpgrade::Crosslink)
                 .map(|lower| (lower, None)),
         }
     }
@@ -905,6 +949,8 @@ impl BranchId {
             BranchId::Nu6_3 => true,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => false,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => false,
         }
     }
 
@@ -917,6 +963,8 @@ impl BranchId {
             BranchId::Nu6_3 => true,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => true,
         }
     }
 
@@ -929,6 +977,8 @@ impl BranchId {
             BranchId::Nu6_3 => true,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7 => true,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink => true,
         }
     }
 
@@ -944,6 +994,8 @@ impl BranchId {
             Nu6_3 => Some(OrchardProtocolRevision::V3),
             #[cfg(zcash_unstable = "nu7")]
             Nu7 => Some(OrchardProtocolRevision::V3),
+            #[cfg(zcash_unstable = "crosslink")]
+            Crosslink => Some(OrchardProtocolRevision::V3),
         }
     }
 }
@@ -993,6 +1045,8 @@ pub mod testing {
             BranchId::Nu6_3,
             #[cfg(zcash_unstable = "nu7")]
             BranchId::Nu7,
+            #[cfg(zcash_unstable = "crosslink")]
+            BranchId::Crosslink,
         ])
     }
 

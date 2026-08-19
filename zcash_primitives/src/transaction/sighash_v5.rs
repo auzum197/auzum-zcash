@@ -137,6 +137,36 @@ pub fn v5_signature_hash<
     signable_input: &SignableInput<'_>,
     txid_parts: &TxDigests<Blake2bHash>,
 ) -> Blake2bHash {
+    v5_signature_hash_inner(
+        tx,
+        signable_input,
+        txid_parts,
+        #[cfg(zcash_unstable = "crosslink")]
+        None,
+    )
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+pub(crate) fn vcrosslink_signature_hash<
+    TA: TransparentAuthorizingContext,
+    A: Authorization<TransparentAuth = TA>,
+>(
+    tx: &TransactionData<A>,
+    signable_input: &SignableInput<'_>,
+    txid_parts: &TxDigests<Blake2bHash>,
+) -> Blake2bHash {
+    v5_signature_hash_inner(tx, signable_input, txid_parts, txid_parts.crosslink_digest)
+}
+
+fn v5_signature_hash_inner<
+    TA: TransparentAuthorizingContext,
+    A: Authorization<TransparentAuth = TA>,
+>(
+    tx: &TransactionData<A>,
+    signable_input: &SignableInput<'_>,
+    txid_parts: &TxDigests<Blake2bHash>,
+    #[cfg(zcash_unstable = "crosslink")] crosslink_digest: Option<Blake2bHash>,
+) -> Blake2bHash {
     // The caller must provide the transparent digests if and only if the transaction has a
     // transparent component.
     assert_eq!(
@@ -156,5 +186,7 @@ pub fn v5_signature_hash<
         ),
         txid_parts.sapling_digest,
         txid_parts.orchard_digest,
+        #[cfg(zcash_unstable = "crosslink")]
+        crosslink_digest,
     )
 }

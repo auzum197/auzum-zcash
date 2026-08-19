@@ -11,6 +11,13 @@ workspace.
 ## [Unreleased]
 
 ### Added
+- Crosslink block-header fat pointers and BFT block-header conversions behind
+  `zcash_unstable = "crosslink"`.
+- VCrosslink transaction parsing, serialization, transaction IDs, signature hashes,
+  auth commitments, and builder support behind `zcash_unstable = "crosslink"`.
+- `transaction::components::staking` types and canonical staking-action encoding.
+- Crosslink digest support in `TxDigests` and `TransactionDigest` behind
+  `zcash_unstable = "crosslink"`.
 - `zcash_primitives::transaction::components::sapling::SPEND_DESCRIPTION_SIZE` and
   `OUTPUT_DESCRIPTION_SIZE`, the sizes in bytes of a Sapling spend description and
   output description in their v4 (pre-NU5) serialized forms. Each is the full
@@ -32,6 +39,10 @@ workspace.
   `TRANSPARENT_BUNDLE_OVERHEAD`, and `TX_HEADER_SIZE`, the consensus-maximum
   transparent input size, the transparent bundle overhead, and the fixed
   transaction header size used in serialized-size estimation.
+
+### Changed
+- `BlockHeaderData::freeze` now returns `BlockHeader` directly.
+- VCrosslink wire encoding and transaction digests use the deployed branch identifier.
 
 ## [0.30.0] - 2026-07-23
 

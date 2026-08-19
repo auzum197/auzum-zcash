@@ -20,6 +20,9 @@ use sha2::{Digest, Sha256};
 use zcash_encoding::{Array, CompactSize, Vector};
 use zcash_protocol::consensus::{self, BlockHeight};
 
+#[cfg(zcash_unstable = "crosslink")]
+use bft_primitives::{BcBlockHash, EncodedBcHeader, FatPointerToBftBlock};
+
 use crate::{
     encoding::{ReadBytesExt, WriteBytesExt},
     transaction::{Transaction, TxVersion},
@@ -102,35 +105,18 @@ pub struct BlockHeaderData {
     pub bits: u32,
     pub nonce: [u8; 32],
     pub solution: Vec<u8>,
+    /// The latest notarized BFT block.
+    #[cfg(zcash_unstable = "crosslink")]
+    pub fat_pointer_to_bft_block: FatPointerToBftBlock,
 }
 
 impl BlockHeaderData {
-    pub fn freeze(self) -> io::Result<BlockHeader> {
+    /// Constructs a block header.
+    pub fn freeze(self) -> BlockHeader {
         BlockHeader::from_data(self)
     }
-}
 
-impl BlockHeader {
-    fn from_data(data: BlockHeaderData) -> io::Result<Self> {
-        let mut header = BlockHeader {
-            hash: BlockHash([0; 32]),
-            data,
-        };
-        let mut raw = vec![];
-        header.write(&mut raw)?;
-        header
-            .hash
-            .0
-            .copy_from_slice(&Sha256::digest(Sha256::digest(&raw)));
-        Ok(header)
-    }
-
-    /// Returns the hash of this header.
-    pub fn hash(&self) -> BlockHash {
-        self.hash
-    }
-
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+    fn read_data<R: Read>(mut reader: R) -> io::Result<Self> {
         let version = reader.read_i32_le()?;
 
         let mut prev_block = BlockHash([0; 32]);
@@ -150,7 +136,10 @@ impl BlockHeader {
 
         let solution = Vector::read(&mut reader, |r| r.read_u8())?;
 
-        BlockHeader::from_data(BlockHeaderData {
+        #[cfg(zcash_unstable = "crosslink")]
+        let fat_pointer_to_bft_block = FatPointerToBftBlock::read(&mut reader)?;
+
+        Ok(Self {
             version,
             prev_block,
             merkle_root,
@@ -159,10 +148,12 @@ impl BlockHeader {
             bits,
             nonce,
             solution,
+            #[cfg(zcash_unstable = "crosslink")]
+            fat_pointer_to_bft_block,
         })
     }
 
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+    fn write_data<W: Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_i32_le(self.version)?;
         writer.write_all(&self.prev_block.0)?;
         writer.write_all(&self.merkle_root)?;
@@ -172,7 +163,161 @@ impl BlockHeader {
         writer.write_all(&self.nonce)?;
         Vector::write(&mut writer, &self.solution, |w, b| w.write_u8(*b))?;
 
+        #[cfg(zcash_unstable = "crosslink")]
+        self.fat_pointer_to_bft_block.write(&mut writer)?;
+
         Ok(())
+    }
+}
+
+struct HashWriter(Sha256);
+
+impl Write for HashWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl BlockHeader {
+    fn from_data(data: BlockHeaderData) -> Self {
+        let mut writer = HashWriter(Sha256::new());
+        data.write_data(&mut writer)
+            .expect("hash writer is infallible");
+        let hash = Sha256::digest(writer.0.finalize()).into();
+
+        Self {
+            hash: BlockHash(hash),
+            data,
+        }
+    }
+
+    /// Returns the hash of this header.
+    pub fn hash(&self) -> BlockHash {
+        self.hash
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        BlockHeaderData::read_data(&mut reader).map(Self::from_data)
+    }
+
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        self.data.write_data(&mut writer)
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<BlockHash> for BcBlockHash {
+    fn from(hash: BlockHash) -> Self {
+        Self::from_bytes(hash.0)
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<BcBlockHash> for BlockHash {
+    fn from(hash: BcBlockHash) -> Self {
+        Self(*hash.as_bytes())
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<&BlockHeader> for EncodedBcHeader {
+    fn from(header: &BlockHeader) -> Self {
+        let mut bytes = Vec::new();
+        header.write(&mut bytes).expect("BlockHeader encoding");
+        Self::read(&bytes[..]).expect("BlockHeader framing")
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<BlockHeader> for EncodedBcHeader {
+    fn from(header: BlockHeader) -> Self {
+        Self::from(&header)
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<&EncodedBcHeader> for BlockHeader {
+    fn from(header: &EncodedBcHeader) -> Self {
+        Self::read(header.as_bytes()).expect("EncodedBcHeader framing")
+    }
+}
+
+#[cfg(zcash_unstable = "crosslink")]
+impl From<EncodedBcHeader> for BlockHeader {
+    fn from(header: EncodedBcHeader) -> Self {
+        Self::from(&header)
+    }
+}
+
+/// Test strategies for block header types.
+#[cfg(any(test, feature = "test-dependencies"))]
+pub mod testing {
+    use proptest::prelude::*;
+
+    use super::{BlockHash, BlockHeaderData};
+
+    /// Width of each header hash field.
+    const HEADER_HASH_BYTES: usize = 32;
+    /// Limits generated solution buffers.
+    const MAX_ARBITRARY_SOLUTION_BYTES: usize = 64;
+
+    #[cfg(zcash_unstable = "crosslink")]
+    proptest::prop_compose! {
+        /// Returns arbitrary block header data.
+        pub fn arb_block_header_data()(
+            version in any::<i32>(),
+            prev_block in any::<[u8; HEADER_HASH_BYTES]>(),
+            merkle_root in any::<[u8; HEADER_HASH_BYTES]>(),
+            final_sapling_root in any::<[u8; HEADER_HASH_BYTES]>(),
+            time in any::<u32>(),
+            bits in any::<u32>(),
+            nonce in any::<[u8; HEADER_HASH_BYTES]>(),
+            solution in proptest::collection::vec(any::<u8>(), 0..=MAX_ARBITRARY_SOLUTION_BYTES),
+            fat_pointer_to_bft_block in bft_primitives::testing::arb_fat_pointer(),
+        ) -> BlockHeaderData {
+            BlockHeaderData {
+                version,
+                prev_block: BlockHash(prev_block),
+                merkle_root,
+                final_sapling_root,
+                time,
+                bits,
+                nonce,
+                solution,
+                fat_pointer_to_bft_block,
+            }
+        }
+    }
+
+    #[cfg(not(zcash_unstable = "crosslink"))]
+    proptest::prop_compose! {
+        /// Returns arbitrary block header data.
+        pub fn arb_block_header_data()(
+            version in any::<i32>(),
+            prev_block in any::<[u8; HEADER_HASH_BYTES]>(),
+            merkle_root in any::<[u8; HEADER_HASH_BYTES]>(),
+            final_sapling_root in any::<[u8; HEADER_HASH_BYTES]>(),
+            time in any::<u32>(),
+            bits in any::<u32>(),
+            nonce in any::<[u8; HEADER_HASH_BYTES]>(),
+            solution in proptest::collection::vec(any::<u8>(), 0..=MAX_ARBITRARY_SOLUTION_BYTES),
+        ) -> BlockHeaderData {
+            BlockHeaderData {
+                version,
+                prev_block: BlockHash(prev_block),
+                merkle_root,
+                final_sapling_root,
+                time,
+                bits,
+                nonce,
+                solution,
+            }
+        }
     }
 }
 
@@ -356,10 +501,54 @@ impl Block {
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, BlockHeader};
     use alloc::vec::Vec;
+
+    #[cfg(zcash_unstable = "crosslink")]
+    use proptest::prelude::*;
+    #[cfg(not(zcash_unstable = "crosslink"))]
     use zcash_protocol::consensus::MAIN_NETWORK;
 
+    use super::BlockHeader;
+
+    #[cfg(not(zcash_unstable = "crosslink"))]
+    use super::Block;
+
+    #[cfg(zcash_unstable = "crosslink")]
+    use {
+        super::{BlockHash, BlockHeaderData},
+        bft_primitives::{
+            BcBlockHash, BftHeight, Blake3Hash, EncodedBcHeader, FatPointerSignature,
+            FatPointerToBftBlock, PubKeyId, Round, VoteSignature,
+            block::SOLUTION_BYTES_REGTEST,
+            hash::BLAKE3_HASH_BYTES,
+            keys::{PUB_KEY_ID_BYTES, VOTE_SIGNATURE_BYTES},
+        },
+    };
+
+    #[cfg(zcash_unstable = "crosslink")]
+    const HEADER_HASH_BYTES: usize = 32;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_HEADER_VERSION: i32 = 4;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_FIELD_BYTE: u8 = 0x11;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_SOLUTION_BYTE: u8 = 0x22;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_TIME: u32 = 1_700_000_000;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_BITS: u32 = 0x1f07_ffff;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_BFT_HEIGHT: u32 = 7;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_ROUND: u32 = 2;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_BLOCK_HASH_BYTE: u8 = 0x33;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_PUBLIC_KEY_BYTE: u8 = 0x44;
+    #[cfg(zcash_unstable = "crosslink")]
+    const TEST_SIGNATURE_BYTE: u8 = 0x55;
+
+    #[cfg(not(zcash_unstable = "crosslink"))]
     const BLOCK_MAINNET_415000: [u8; 1640] = [
         0x04, 0x00, 0x00, 0x00, 0x52, 0x74, 0xb4, 0x3b, 0x9e, 0x4a, 0xd8, 0xf4, 0x3e, 0x93, 0xf7,
         0x84, 0x63, 0xd2, 0x4d, 0xcf, 0xe5, 0x31, 0xae, 0xb4, 0x71, 0x98, 0x19, 0xf4, 0xf9, 0x7f,
@@ -473,6 +662,129 @@ mod tests {
         0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
+    #[cfg(zcash_unstable = "crosslink")]
+    fn populated_fat_pointer() -> FatPointerToBftBlock {
+        FatPointerToBftBlock::from_parts(
+            Blake3Hash::from_bytes([TEST_BLOCK_HASH_BYTE; BLAKE3_HASH_BYTES]),
+            BftHeight::new(TEST_BFT_HEIGHT),
+            Round::new(TEST_ROUND).unwrap(),
+            vec![FatPointerSignature::from_parts(
+                PubKeyId::from_bytes([TEST_PUBLIC_KEY_BYTE; PUB_KEY_ID_BYTES]),
+                VoteSignature::from_bytes([TEST_SIGNATURE_BYTE; VOTE_SIGNATURE_BYTES]),
+            )],
+        )
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    fn test_header_data(fat_pointer_to_bft_block: FatPointerToBftBlock) -> BlockHeaderData {
+        BlockHeaderData {
+            version: TEST_HEADER_VERSION,
+            prev_block: BlockHash([TEST_FIELD_BYTE; HEADER_HASH_BYTES]),
+            merkle_root: [TEST_FIELD_BYTE; HEADER_HASH_BYTES],
+            final_sapling_root: [TEST_FIELD_BYTE; HEADER_HASH_BYTES],
+            time: TEST_TIME,
+            bits: TEST_BITS,
+            nonce: [TEST_FIELD_BYTE; HEADER_HASH_BYTES],
+            solution: vec![TEST_SOLUTION_BYTE; SOLUTION_BYTES_REGTEST],
+            fat_pointer_to_bft_block,
+        }
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    fn encode_header(header: &BlockHeader) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        header.write(&mut encoded).unwrap();
+        encoded
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    #[test]
+    fn null_fat_pointer_round_trip() {
+        let header = test_header_data(FatPointerToBftBlock::null()).freeze();
+        let encoded = encode_header(&header);
+        let parsed = BlockHeader::read(&encoded[..]).unwrap();
+
+        assert_eq!(
+            parsed.fat_pointer_to_bft_block,
+            FatPointerToBftBlock::null()
+        );
+        assert_eq!(encode_header(&parsed), encoded);
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    #[test]
+    fn populated_fat_pointer_round_trip_and_hash() {
+        const EXPECTED_HASH: &str =
+            "d425aa118b289ed118ef040b970dbd4c407fe2f4a74027127ddb1ac0f419f85d";
+
+        let fat_pointer = populated_fat_pointer();
+        let header = test_header_data(fat_pointer.clone()).freeze();
+        let encoded = encode_header(&header);
+        let parsed = BlockHeader::read(&encoded[..]).unwrap();
+
+        assert_eq!(parsed.fat_pointer_to_bft_block, fat_pointer);
+        assert_eq!(format!("{}", parsed.hash()), EXPECTED_HASH);
+        assert_eq!(encode_header(&parsed), encoded);
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    #[test]
+    fn malformed_fat_pointer_is_rejected() {
+        let pointer = populated_fat_pointer();
+        let pointer_bytes = pointer.to_bytes();
+        let header = test_header_data(pointer).freeze();
+        let mut encoded = encode_header(&header);
+        let pointer_start = encoded.len() - pointer_bytes.len();
+        let height_start = pointer_start + populated_fat_pointer().block_hash().as_bytes().len();
+        let height_end = height_start + core::mem::size_of::<u64>();
+        encoded[height_start..height_end].copy_from_slice(&u64::MAX.to_le_bytes());
+
+        assert!(BlockHeader::read(&encoded[..]).is_err());
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    #[test]
+    fn truncated_fat_pointer_is_rejected() {
+        let header = test_header_data(populated_fat_pointer()).freeze();
+        let mut encoded = encode_header(&header);
+        encoded.pop();
+
+        assert!(BlockHeader::read(&encoded[..]).is_err());
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    #[test]
+    fn bft_header_conversions_are_lossless() {
+        let header = test_header_data(populated_fat_pointer()).freeze();
+        let expected_hash = header.hash();
+        let encoded = encode_header(&header);
+
+        let bft_header = EncodedBcHeader::from(header);
+        assert_eq!(bft_header.as_bytes(), encoded);
+        assert_eq!(BlockHash::from(bft_header.hash()), expected_hash);
+        assert_eq!(
+            BlockHash::from(BcBlockHash::from(expected_hash)),
+            expected_hash
+        );
+
+        let converted = BlockHeader::from(bft_header);
+        assert_eq!(encode_header(&converted), encoded);
+        assert_eq!(converted.hash(), expected_hash);
+    }
+
+    #[cfg(zcash_unstable = "crosslink")]
+    proptest! {
+        #[test]
+        fn arbitrary_header_data_round_trips(
+            data in super::testing::arb_block_header_data()
+        ) {
+            let encoded = encode_header(&data.freeze());
+            let parsed = BlockHeader::read(&encoded[..]).unwrap();
+            prop_assert_eq!(encode_header(&parsed), encoded);
+        }
+    }
+
+    #[cfg(not(zcash_unstable = "crosslink"))]
     #[test]
     fn header_read_write() {
         let header_mainnet_415000 = &BLOCK_MAINNET_415000[..1487];
@@ -487,6 +799,7 @@ mod tests {
         assert_eq!(header_mainnet_415000, &encoded[..]);
     }
 
+    #[cfg(not(zcash_unstable = "crosslink"))]
     #[test]
     fn block_read_write() {
         let block = Block::read(&BLOCK_MAINNET_415000[..], &MAIN_NETWORK).unwrap();

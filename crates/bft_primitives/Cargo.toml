@@ -1,0 +1,75 @@
+[package]
+name = "bft_primitives"
+description = "Core data types for the Zcash Crosslink BFT protocol."
+version = "0.1.0"
+authors = [
+    "dorianvp <dorianvp@zingolabs.org>",
+]
+homepage = "https://github.com/zcash/librustzcash"
+repository.workspace = true
+readme = "README.md"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+categories = ["cryptography::cryptocurrencies"]
+keywords = ["zcash", "crosslink", "bft"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+zcash_protocol.workspace = true
+equihash.workspace = true
+
+# - Encodings
+zcash_encoding.workspace = true
+corez.workspace = true
+
+# - Cryptography
+blake3 = { version = "1.8.6", default-features = false }
+ed25519-zebra = { version = "4.2", default-features = false, features = ["alloc"] }
+rand_core.workspace = true
+sha2.workspace = true
+
+# - Documentation
+document-features = { workspace = true, optional = true }
+
+# - Errors
+snafu.workspace = true
+
+# - JSON serialization (never the canonical binary format)
+hex = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde-big-array = { version = "0.5.1", optional = true }
+
+# - Test dependencies
+proptest = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+serde_json.workspace = true
+zcash_protocol = { workspace = true, features = ["test-dependencies"] }
+
+[features]
+default = []
+
+## Enables `std` support in dependencies.
+std = [
+    "dep:document-features",
+    "blake3/std",
+    "ed25519-zebra/std",
+    "equihash/std",
+    "snafu/std",
+    "zcash_protocol/std",
+]
+
+## Enables JSON-oriented serialization of node-facing types.
+serde = ["dep:hex", "dep:serde", "dep:serde-big-array", "ed25519-zebra/serde", "serde/alloc"]
+
+## Exposes APIs that are useful for testing, such as `proptest` strategies.
+test-dependencies = ["dep:proptest", "zcash_protocol/test-dependencies"]
+
+[lints]
+workspace = true
