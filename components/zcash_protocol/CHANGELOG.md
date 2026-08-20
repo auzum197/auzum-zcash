@@ -17,12 +17,10 @@ workspace.
   form produced by `TxId`'s `Display` impl.
 - Crosslink protocol support, gated behind the `zcash_unstable = "crosslink"`
   cfg flag:
-  - `consensus::NetworkUpgrade::Crosslink` and `consensus::BranchId::Crosslink`.
   - `consensus::MAX_BLOCK_REORG_HEIGHT`.
   - `constants::{VCROSSLINK_TX_VERSION, VCROSSLINK_VERSION_GROUP_ID,
     STAKING_PERIOD, STAKING_DAY_WINDOW, SLASH_ANALYSIS_WINDOW}`.
   - `constants::is_in_staking_day_window`.
-  - `local_consensus::LocalNetwork::crosslink`.
 
 ## [0.10.4] - 2026-08-03
 

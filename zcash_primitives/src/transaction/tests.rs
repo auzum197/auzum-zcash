@@ -238,21 +238,21 @@ fn vcrosslink_conformance_vectors() {
     const BOND_BYTE: u8 = 0x11;
     const CHALLENGE_BYTE: u8 = 0x22;
     const SIGNATURE_BYTE: u8 = 0x33;
-    const ABSENT_WIRE: &str = "07000080fefffffff04dec4d4433221188776655000000000000";
-    const ABSENT_TXID: &str = "5ebaf40800bef544b96a1ef477d269857f766a8d5c05535e77ccec27464ca7fe";
-    const ABSENT_AUTH: &str = "d825d35d4c8d1e14f90d26bcbdd40d5250d5bd918e6af48dbad25c86dd02ab28";
-    const ABSENT_SIGHASH: &str = "5ebaf40800bef544b96a1ef477d269857f766a8d5c05535e77ccec27464ca7fe";
+    const ABSENT_WIRE: &str = "07000080feffffff5510e7c84433221188776655000000000000";
+    const ABSENT_TXID: &str = "1605de8f4bdabe4f05dd42f9fa0d1640aad3c40e7566133749baa9ebf1226093";
+    const ABSENT_AUTH: &str = "eec1b105c9c092a73c77a255c87a5820632b1277d07e82035b23d58746214b77";
+    const ABSENT_SIGHASH: &str = "1605de8f4bdabe4f05dd42f9fa0d1640aad3c40e7566133749baa9ebf1226093";
     const PRESENT_WIRE: &str = concat!(
-        "07000080fefffffff04dec4d4433221188776655000000000002",
+        "07000080feffffff5510e7c84433221188776655000000000002",
         "1111111111111111111111111111111111111111111111111111111111111111",
         "2222222222222222222222222222222222222222222222222222222222222222",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "3333333333333333333333333333333333333333333333333333333333333333",
     );
-    const PRESENT_TXID: &str = "4e6a21f9024806d6e52292e3296508a13040eb3eca323b86699c184fe09ec633";
-    const PRESENT_AUTH: &str = "c0841d72569d0ef382a9cc33a178c6a2a658c48c0f17f58c4be019d74b7666f8";
+    const PRESENT_TXID: &str = "e567d8a613acb4c0062c2a42c02ef86fd1ca4ce93b3701722cd82304664c04d0";
+    const PRESENT_AUTH: &str = "5da7f5a3d5de4b970777065b9ae913a19295455325ddfcff4115f123810e04fa";
     const PRESENT_SIGHASH: &str =
-        "4e6a21f9024806d6e52292e3296508a13040eb3eca323b86699c184fe09ec633";
+        "e567d8a613acb4c0062c2a42c02ef86fd1ca4ce93b3701722cd82304664c04d0";
 
     fn assert_vector(
         staking_action: Option<StakingAction>,
@@ -262,7 +262,7 @@ fn vcrosslink_conformance_vectors() {
         expected_sighash: &str,
     ) {
         let data = TransactionData::<Authorized>::from_parts_vcrosslink(
-            BranchId::Crosslink,
+            BranchId::Nu6,
             LOCK_TIME,
             EXPIRY_HEIGHT,
             None,
@@ -271,7 +271,7 @@ fn vcrosslink_conformance_vectors() {
             staking_action,
         );
         let sig_data = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
-            BranchId::Crosslink,
+            BranchId::Nu6,
             LOCK_TIME,
             EXPIRY_HEIGHT,
             None,
@@ -293,7 +293,7 @@ fn vcrosslink_conformance_vectors() {
         assert_eq!(hex::encode(tx.auth_commitment().as_ref()), expected_auth);
         assert_eq!(hex::encode(sighash.as_ref()), expected_sighash);
 
-        let decoded = Transaction::read(&wire[..], BranchId::Crosslink).unwrap();
+        let decoded = Transaction::read(&wire[..], BranchId::Nu6).unwrap();
         let mut round_trip = Vec::new();
         decoded.write(&mut round_trip).unwrap();
         assert_eq!(round_trip, wire);
@@ -331,7 +331,7 @@ fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
     const SECOND_ACTION_BYTE: u8 = 2;
 
     let tx_data_a = TransactionData::<Authorized>::from_parts_vcrosslink(
-        BranchId::Crosslink,
+        BranchId::Nu6,
         TEST_LOCK_TIME,
         TEST_EXPIRY_HEIGHT,
         None,
@@ -341,7 +341,7 @@ fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
     );
     let txid_parts_a = tx_data_a.digest(TxIdDigester);
     let sig_data_a = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
-        BranchId::Crosslink,
+        BranchId::Nu6,
         TEST_LOCK_TIME,
         TEST_EXPIRY_HEIGHT,
         None,
@@ -357,7 +357,7 @@ fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
     let tx_a = tx_data_a.freeze().unwrap();
 
     let tx_data_b = TransactionData::<Authorized>::from_parts_vcrosslink(
-        BranchId::Crosslink,
+        BranchId::Nu6,
         TEST_LOCK_TIME,
         TEST_EXPIRY_HEIGHT,
         None,
@@ -366,7 +366,7 @@ fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
         Some(test_staking_action(SECOND_ACTION_BYTE)),
     );
     let sig_data_b = TransactionData::<TestUnauthorized>::from_parts_vcrosslink(
-        BranchId::Crosslink,
+        BranchId::Nu6,
         TEST_LOCK_TIME,
         TEST_EXPIRY_HEIGHT,
         None,
@@ -387,7 +387,7 @@ fn vcrosslink_round_trip_and_digests_commit_to_the_staking_action() {
 
     let mut encoded = Vec::new();
     tx_a.write(&mut encoded).unwrap();
-    let decoded = Transaction::read(&encoded[..], BranchId::Crosslink).unwrap();
+    let decoded = Transaction::read(&encoded[..], BranchId::Nu6).unwrap();
     assert_eq!(decoded.txid(), tx_a.txid());
     assert_eq!(decoded.staking_action(), tx_a.staking_action());
 }
@@ -1100,15 +1100,6 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(10))]
     #[test]
     fn tx_serialization_roundtrip_nu7(tx in arb_tx(BranchId::Nu7)) {
-        check_roundtrip(tx)?;
-    }
-}
-
-#[cfg(all(test, zcash_unstable = "crosslink"))]
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(10))]
-    #[test]
-    fn tx_serialization_roundtrip_crosslink(tx in arb_tx(BranchId::Crosslink)) {
         check_roundtrip(tx)?;
     }
 }
