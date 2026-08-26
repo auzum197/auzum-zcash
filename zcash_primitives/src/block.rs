@@ -21,7 +21,7 @@ use zcash_encoding::{Array, CompactSize, Vector};
 use zcash_protocol::consensus::{self, BlockHeight};
 
 #[cfg(zcash_unstable = "crosslink")]
-use bft_primitives::{BcBlockHash, EncodedBcHeader, FatPointerToBftBlock};
+use bft_primitives::{EncodedPowHeader, FatPointerToBftBlock, PowBlockHash};
 
 use crate::{
     encoding::{ReadBytesExt, WriteBytesExt},
@@ -211,21 +211,21 @@ impl BlockHeader {
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<BlockHash> for BcBlockHash {
+impl From<BlockHash> for PowBlockHash {
     fn from(hash: BlockHash) -> Self {
         Self::from_bytes(hash.0)
     }
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<BcBlockHash> for BlockHash {
-    fn from(hash: BcBlockHash) -> Self {
+impl From<PowBlockHash> for BlockHash {
+    fn from(hash: PowBlockHash) -> Self {
         Self(*hash.as_bytes())
     }
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<&BlockHeader> for EncodedBcHeader {
+impl From<&BlockHeader> for EncodedPowHeader {
     fn from(header: &BlockHeader) -> Self {
         let mut bytes = Vec::new();
         header.write(&mut bytes).expect("BlockHeader encoding");
@@ -234,22 +234,22 @@ impl From<&BlockHeader> for EncodedBcHeader {
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<BlockHeader> for EncodedBcHeader {
+impl From<BlockHeader> for EncodedPowHeader {
     fn from(header: BlockHeader) -> Self {
         Self::from(&header)
     }
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<&EncodedBcHeader> for BlockHeader {
-    fn from(header: &EncodedBcHeader) -> Self {
-        Self::read(header.as_bytes()).expect("EncodedBcHeader framing")
+impl From<&EncodedPowHeader> for BlockHeader {
+    fn from(header: &EncodedPowHeader) -> Self {
+        Self::read(header.as_bytes()).expect("EncodedPowHeader framing")
     }
 }
 
 #[cfg(zcash_unstable = "crosslink")]
-impl From<EncodedBcHeader> for BlockHeader {
-    fn from(header: EncodedBcHeader) -> Self {
+impl From<EncodedPowHeader> for BlockHeader {
+    fn from(header: EncodedPowHeader) -> Self {
         Self::from(&header)
     }
 }
@@ -517,8 +517,8 @@ mod tests {
     use {
         super::{BlockHash, BlockHeaderData},
         bft_primitives::{
-            BcBlockHash, BftHeight, Blake3Hash, EncodedBcHeader, FatPointerSignature,
-            FatPointerToBftBlock, PubKeyId, Round, VoteSignature,
+            BftHeight, Blake3Hash, EncodedPowHeader, FatPointerSignature, FatPointerToBftBlock,
+            PowBlockHash, PubKeyId, Round, VoteSignature,
             block::SOLUTION_BYTES_REGTEST,
             hash::BLAKE3_HASH_BYTES,
             keys::{PUB_KEY_ID_BYTES, VOTE_SIGNATURE_BYTES},
@@ -759,11 +759,11 @@ mod tests {
         let expected_hash = header.hash();
         let encoded = encode_header(&header);
 
-        let bft_header = EncodedBcHeader::from(header);
+        let bft_header = EncodedPowHeader::from(header);
         assert_eq!(bft_header.as_bytes(), encoded);
         assert_eq!(BlockHash::from(bft_header.hash()), expected_hash);
         assert_eq!(
-            BlockHash::from(BcBlockHash::from(expected_hash)),
+            BlockHash::from(PowBlockHash::from(expected_hash)),
             expected_hash
         );
 

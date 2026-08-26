@@ -5,12 +5,12 @@ use alloc::vec::Vec;
 use proptest::{prelude::*, strategy::ValueTree};
 
 use crate::{
-    BcBlockHash, BftBlock, BftBlockVersion, BftHeight, Blake3Hash, EquihashParameters,
-    FatPointerSignature, FatPointerToBftBlock, HardForkConfig, InvalidBftBlock,
-    InvalidHardForkConfig, NotarizedBftBlock, PROTOTYPE_PARAMETERS, PubKeyId, RosterMember, Round,
-    Vote, VoteKind, VoteSignature, ZcashCrosslinkParameters,
+    BftBlock, BftBlockVersion, BftHeight, Blake3Hash, EquihashParameters, FatPointerSignature,
+    FatPointerToBftBlock, HardForkConfig, InvalidBftBlock, InvalidHardForkConfig,
+    NotarizedBftBlock, PROTOTYPE_PARAMETERS, PowBlockHash, PubKeyId, RosterMember, Round, Vote,
+    VoteKind, VoteSignature, ZcashCrosslinkParameters,
     testing::{
-        arb_bft_block, arb_encoded_bc_header, arb_fat_pointer, arb_hard_fork_config,
+        arb_bft_block, arb_encoded_pow_header, arb_fat_pointer, arb_hard_fork_config,
         arb_roster_member, arb_vote,
     },
     vote::VOTE_BYTES,
@@ -38,9 +38,9 @@ proptest! {
     }
 
     #[test]
-    fn encoded_bc_header_round_trip(header in arb_encoded_bc_header()) {
+    fn encoded_bc_header_round_trip(header in arb_encoded_pow_header()) {
         let bytes = header.as_bytes().to_vec();
-        let parsed = crate::EncodedBcHeader::read(&bytes[..]).unwrap();
+        let parsed = crate::EncodedPowHeader::read(&bytes[..]).unwrap();
         prop_assert_eq!(header, parsed);
     }
 
@@ -250,7 +250,7 @@ fn incorrect_confirmation_depth_is_rejected() {
 fn broken_header_chain_is_rejected() {
     let params = ZcashCrosslinkParameters::new(2, 4).unwrap();
     let mut runner = proptest::test_runner::TestRunner::deterministic();
-    let header = arb_encoded_bc_header()
+    let header = arb_encoded_pow_header()
         .new_tree(&mut runner)
         .unwrap()
         .current();
@@ -306,7 +306,7 @@ fn roster_member_rejects_out_of_range_amounts() {
 fn bc_block_hash_displays_reversed() {
     let mut bytes = [0u8; 32];
     bytes[0] = 0xab;
-    assert!(alloc::format!("{}", BcBlockHash::from_bytes(bytes)).ends_with("ab"));
+    assert!(alloc::format!("{}", PowBlockHash::from_bytes(bytes)).ends_with("ab"));
 }
 
 #[cfg(feature = "serde")]

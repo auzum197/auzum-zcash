@@ -7,7 +7,7 @@ use zcash_protocol::consensus::BlockHeight;
 
 use crate::{
     block::{
-        BftBlock, BftBlockV2Data, BftBlockVersion, EncodedBcHeader, HEADER_PREFIX_BYTES,
+        BftBlock, BftBlockV2Data, BftBlockVersion, EncodedPowHeader, HEADER_PREFIX_BYTES,
         MIN_HEADER_VERSION, NotarizedBftBlock, SOLUTION_BYTES_MAINNET, SOLUTION_BYTES_REGTEST,
     },
     fat_pointer::{FatPointerSignature, FatPointerToBftBlock},
@@ -144,14 +144,14 @@ prop_compose! {
 }
 
 prop_compose! {
-    /// Returns a strategy for arbitrary structurally-valid [`EncodedBcHeader`]
+    /// Returns a strategy for arbitrary structurally-valid [`EncodedPowHeader`]
     /// values. The Equihash solution is not valid.
-    pub fn arb_encoded_bc_header()(
+    pub fn arb_encoded_pow_header()(
         prefix in any::<[u8; HEADER_PREFIX_BYTES]>(),
         version in MIN_HEADER_VERSION..=6u32,
         regtest_solution in any::<bool>(),
         fat_pointer in arb_fat_pointer(),
-    ) -> EncodedBcHeader {
+    ) -> EncodedPowHeader {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&prefix);
         bytes[0..4].copy_from_slice(&version.to_le_bytes());
@@ -177,7 +177,7 @@ prop_compose! {
                 .expect("the signature count is below the limit");
         }
 
-        EncodedBcHeader {
+        EncodedPowHeader {
             bytes,
             solution_start,
             solution_len,
@@ -210,7 +210,7 @@ prop_compose! {
         version in arb_bft_block_version(),
         height in 0u32..u32::MAX,
         previous_block_fat_ptr in arb_fat_pointer(),
-        headers in vec(arb_encoded_bc_header(), 0..3),
+        headers in vec(arb_encoded_pow_header(), 0..3),
     ) -> BftBlock {
         BftBlock {
             version,

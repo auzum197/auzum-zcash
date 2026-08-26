@@ -39,8 +39,8 @@ pub mod testing;
 mod tests;
 
 pub use block::{
-    BcBlockHash, BftBlock, BftBlockV2Data, BftBlockVersion, EncodedBcHeader, InvalidBftBlock,
-    NotarizedBftBlock,
+    BftBlock, BftBlockV2Data, BftBlockVersion, EncodedPowHeader, InvalidBftBlock,
+    NotarizedBftBlock, PowBlockHash,
 };
 pub use fat_pointer::{FatPointerSignature, FatPointerToBftBlock};
 pub use hard_fork::{HardForkConfig, InvalidHardForkConfig};
