@@ -101,9 +101,9 @@ pub enum InvalidBftBlock {
 
 /// The double-SHA256 hash of a PoW block header.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BcBlockHash(pub(crate) [u8; 32]);
+pub struct PowBlockHash(pub(crate) [u8; 32]);
 
-impl BcBlockHash {
+impl PowBlockHash {
     /// Constructs a hash from its byte representation.
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
@@ -115,7 +115,7 @@ impl BcBlockHash {
     }
 }
 
-impl fmt::Display for BcBlockHash {
+impl fmt::Display for PowBlockHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for b in self.0.iter().rev() {
             write!(f, "{b:02x}")?;
@@ -124,9 +124,9 @@ impl fmt::Display for BcBlockHash {
     }
 }
 
-impl fmt::Debug for BcBlockHash {
+impl fmt::Debug for PowBlockHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BcBlockHash(\"{self}\")")
+        write!(f, "PowBlockHash(\"{self}\")")
     }
 }
 
@@ -134,13 +134,13 @@ impl fmt::Debug for BcBlockHash {
 ///
 /// Parsing checks the fixed prefix, Equihash solution, and fat-pointer framing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EncodedBcHeader {
+pub struct EncodedPowHeader {
     pub(crate) bytes: Vec<u8>,
     pub(crate) solution_start: usize,
     pub(crate) solution_len: usize,
 }
 
-impl EncodedBcHeader {
+impl EncodedPowHeader {
     /// Reads a header, preserving its bytes exactly.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut bytes = Vec::new();
@@ -215,8 +215,8 @@ impl EncodedBcHeader {
     }
 
     /// Returns the hash of the header this header builds on.
-    pub fn prev_block_hash(&self) -> BcBlockHash {
-        BcBlockHash(
+    pub fn prev_block_hash(&self) -> PowBlockHash {
+        PowBlockHash(
             self.bytes[4..36]
                 .try_into()
                 .expect("slice length matches the array length"),
@@ -224,8 +224,8 @@ impl EncodedBcHeader {
     }
 
     /// Returns this header's double-SHA256 hash.
-    pub fn hash(&self) -> BcBlockHash {
-        BcBlockHash(Sha256::digest(Sha256::digest(&self.bytes)).into())
+    pub fn hash(&self) -> PowBlockHash {
+        PowBlockHash(Sha256::digest(Sha256::digest(&self.bytes)).into())
     }
 
     /// Returns the Equihash solution bytes, without the length prefix.
@@ -328,7 +328,7 @@ pub struct BftBlock {
     pub(crate) version: BftBlockVersion,
     pub(crate) height: BftHeight,
     pub(crate) previous_block_fat_ptr: FatPointerToBftBlock,
-    pub(crate) headers: Vec<EncodedBcHeader>,
+    pub(crate) headers: Vec<EncodedPowHeader>,
 }
 
 impl BftBlock {
@@ -340,7 +340,7 @@ impl BftBlock {
         version: BftBlockVersion,
         height: BftHeight,
         previous_block_fat_ptr: FatPointerToBftBlock,
-        headers: Vec<EncodedBcHeader>,
+        headers: Vec<EncodedPowHeader>,
     ) -> Result<Self, InvalidBftBlock> {
         check_headers(params, pow, &headers)?;
         Ok(Self {
@@ -380,13 +380,13 @@ impl BftBlock {
     }
 
     /// Returns the PoW headers carried by this block, deepest first.
-    pub fn headers(&self) -> &[EncodedBcHeader] {
+    pub fn headers(&self) -> &[EncodedPowHeader] {
         &self.headers
     }
 
     /// Returns the header that is the finalization candidate for this block, or
     /// `None` if the block carries no headers.
-    pub fn finalization_candidate(&self) -> Option<&EncodedBcHeader> {
+    pub fn finalization_candidate(&self) -> Option<&EncodedPowHeader> {
         self.headers.first()
     }
 
@@ -474,7 +474,7 @@ impl BftBlock {
         }
         let mut headers = Vec::new();
         for _ in 0..header_count {
-            headers.push(EncodedBcHeader::read(&mut reader)?);
+            headers.push(EncodedPowHeader::read(&mut reader)?);
         }
 
         let version = if version >= 2 {
@@ -561,9 +561,9 @@ impl BftBlock {
 fn check_headers(
     params: &ZcashCrosslinkParameters,
     pow: &EquihashParameters,
-    headers: &[EncodedBcHeader],
+    headers: &[EncodedPowHeader],
 ) -> Result<(), InvalidBftBlock> {
-    let expected = params.bc_confirmation_depth_sigma;
+    let expected = params.pow_confirmation_depth_sigma;
     let actual = headers.len() as u64;
     if actual != expected {
         return Err(InvalidBftBlock::IncorrectConfirmationDepth { expected, actual });

@@ -24,7 +24,7 @@ pub enum InvalidParameters {
 /// Zcash Crosslink protocol parameters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZcashCrosslinkParameters {
-    pub(crate) bc_confirmation_depth_sigma: u64,
+    pub(crate) pow_confirmation_depth_sigma: u64,
     pub(crate) finalization_gap_bound: u64,
 }
 
@@ -32,28 +32,28 @@ impl ZcashCrosslinkParameters {
     /// Constructs parameters, requiring `sigma >= 1` and
     /// `finalization_gap_bound >= 2 * sigma`.
     pub fn new(
-        bc_confirmation_depth_sigma: u64,
+        pow_confirmation_depth_sigma: u64,
         finalization_gap_bound: u64,
     ) -> Result<Self, InvalidParameters> {
-        if bc_confirmation_depth_sigma == 0 {
+        if pow_confirmation_depth_sigma == 0 {
             return Err(InvalidParameters::ZeroConfirmationDepth);
         }
-        if finalization_gap_bound < 2 * bc_confirmation_depth_sigma {
+        if finalization_gap_bound < 2 * pow_confirmation_depth_sigma {
             return Err(InvalidParameters::GapBelowTwiceSigma {
-                sigma: bc_confirmation_depth_sigma,
+                sigma: pow_confirmation_depth_sigma,
                 gap: finalization_gap_bound,
             });
         }
         Ok(Self {
-            bc_confirmation_depth_sigma,
+            pow_confirmation_depth_sigma,
             finalization_gap_bound,
         })
     }
 
     /// The best-chain confirmation depth, sigma: the number of PoW headers each BFT
     /// block carries.
-    pub fn bc_confirmation_depth_sigma(&self) -> u64 {
-        self.bc_confirmation_depth_sigma
+    pub fn pow_confirmation_depth_sigma(&self) -> u64 {
+        self.pow_confirmation_depth_sigma
     }
 
     /// The depth of unfinalized PoW blocks past which Stalled Mode activates.
@@ -67,7 +67,7 @@ impl ZcashCrosslinkParameters {
 /// <div class="warning">No verification has been done on the security or performance
 /// of these parameters.</div>
 pub const PROTOTYPE_PARAMETERS: ZcashCrosslinkParameters = ZcashCrosslinkParameters {
-    bc_confirmation_depth_sigma: 3,
+    pow_confirmation_depth_sigma: 3,
     finalization_gap_bound: 7,
 };
 
